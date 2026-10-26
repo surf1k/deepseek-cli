@@ -4,6 +4,7 @@ mod config;
 pub mod cost;
 mod files;
 mod git;
+mod onboarding;
 mod repl;
 pub mod session;
 mod shell;
@@ -182,19 +183,19 @@ async fn main() -> Result<()> {
         match cmd {
             Commands::Config { action } => return handle_config_action(action, cfg),
             Commands::Commit { model } => {
-                let api_key = require_api_key(&cfg)?;
+                let api_key = require_api_key(&mut cfg).await?;
                 let client = api::DeepSeekClient::new(cfg.base_url.clone(), api_key);
                 let assistant = GitAssistant::new(&client, &cfg, model);
                 return assistant.run_commit().await;
             }
             Commands::Review { model } => {
-                let api_key = require_api_key(&cfg)?;
+                let api_key = require_api_key(&mut cfg).await?;
                 let client = api::DeepSeekClient::new(cfg.base_url.clone(), api_key);
                 let assistant = GitAssistant::new(&client, &cfg, model.or(Some("r1".to_string())));
                 return assistant.run_review().await;
             }
             Commands::Sh { task } => {
-                let api_key = require_api_key(&cfg)?;
+                let api_key = require_api_key(&mut cfg).await?;
                 let client = api::DeepSeekClient::new(cfg.base_url.clone(), api_key);
                 let helper = ShellHelper::new(&client, &cfg);
                 let query = task.join(" ");
@@ -204,7 +205,7 @@ async fn main() -> Result<()> {
                 return helper.run(&query).await;
             }
             Commands::Agent { task, auto, model } => {
-                let api_key = require_api_key(&cfg)?;
+                let api_key = require_api_key(&mut cfg).await?;
                 let client = api::DeepSeekClient::new(cfg.base_url.clone(), api_key);
                 let selected_model = model.unwrap_or_else(|| "deepseek-chat".to_string());
                 let mut agent = agent::Agent::new(&client, selected_model, auto);
@@ -250,7 +251,7 @@ async fn main() -> Result<()> {
     }
 
     // Resolve API key
-    let api_key = require_api_key(&cfg)?;
+    let api_key = require_api_key(&mut cfg).await?;
 
     // Check if --agent flag was passed with prompt
     if cli.agent {
@@ -308,19 +309,22 @@ async fn main() -> Result<()> {
     run_one_shot(cli, cfg, api_key, stdin_content).await
 }
 
-fn require_api_key(cfg: &Config) -> Result<String> {
-    match cfg.resolve_api_key() {
-        Some(k) => Ok(k),
-        None => {
-            eprintln!("{}", "Error: No DeepSeek API key found.".red().bold());
-            eprintln!(
-                "Set it via environment variable: {} or run:\n  {}",
-                "export DEEPSEEK_API_KEY=sk-...".cyan(),
-                "deepseek config set-key <YOUR_KEY>".yellow()
-            );
-            std::process::exit(1);
-        }
+async fn require_api_key(cfg: &mut Config) -> Result<String> {
+    if let Some(k) = cfg.resolve_api_key() {
+        return Ok(k);
     }
+
+    if io::stdin().is_terminal() {
+        return onboarding::run_onboarding(cfg).await;
+    }
+
+    eprintln!("{}", "Error: No DeepSeek API key found.".red().bold());
+    eprintln!(
+        "Set it via environment variable: {} or run:\n  {}",
+        "export DEEPSEEK_API_KEY=sk-...".cyan(),
+        "deepseek config set-key <YOUR_KEY>".yellow()
+    );
+    std::process::exit(1);
 }
 
 fn handle_config_action(action: ConfigAction, mut cfg: Config) -> Result<()> {
