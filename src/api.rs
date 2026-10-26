@@ -390,4 +390,37 @@ impl DeepSeekClient {
 
         Ok((full_reasoning, full_content, stats))
     }
+
+    pub async fn get_account_balance(&self) -> Result<BalanceResponse> {
+        let url = format!("{}/user/balance", self.base_url.trim_end_matches('/'));
+        let res = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .context("Failed to connect to DeepSeek API")?;
+
+        if !res.status().is_success() {
+            let err_text = res.text().await.unwrap_or_default();
+            bail!("Failed to fetch account balance: {}", err_text);
+        }
+
+        let balance: BalanceResponse = res.json().await.context("Failed to parse balance response")?;
+        Ok(balance)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BalanceInfo {
+    pub currency: String,
+    pub total_balance: String,
+    pub granted_balance: String,
+    pub topped_up_balance: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BalanceResponse {
+    pub is_available: bool,
+    pub balance_infos: Vec<BalanceInfo>,
 }

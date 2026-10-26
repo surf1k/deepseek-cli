@@ -163,27 +163,35 @@ async fn prompt_web_browser_login(cfg: &Config) -> Result<String> {
         }
 
         // Validate Key
-        let spinner = create_spinner("Verifying API key with DeepSeek servers...");
-        let is_valid = validate_key(&cfg.base_url, &key).await;
+        let spinner = create_spinner("Connecting to DeepSeek account...");
+        let is_valid = validate_key_details(&cfg.base_url, &key).await;
         spinner.finish_and_clear();
 
         // Abort background server task now that we have a key
         server_task.abort();
 
         match is_valid {
-            Some(true) => {
+            Some((true, Some(balance))) => {
                 println!(
-                    "  {} API key verified! Connected to DeepSeek Platform.",
+                    "  {} Authenticated in DeepSeek Account! (Balance: {})",
+                    "✓".green().bold(),
+                    balance.bold().green()
+                );
+                return Ok(key);
+            }
+            Some((true, None)) => {
+                println!(
+                    "  {} Authenticated successfully! Connected to DeepSeek.",
                     "✓".green().bold()
                 );
                 return Ok(key);
             }
-            Some(false) => {
+            Some((false, _)) => {
                 println!(
                     "  {} DeepSeek server rejected this key (401 Unauthorized).",
                     "⚠".yellow().bold()
                 );
-                print!("  Do you want to retry entering your key? [Y/n]: ");
+                print!("  Do you want to retry? [Y/n]: ");
                 let _ = stdout().flush();
                 let mut retry = String::new();
                 let _ = stdin().read_line(&mut retry);
@@ -193,7 +201,7 @@ async fn prompt_web_browser_login(cfg: &Config) -> Result<String> {
             }
             None => {
                 println!(
-                    "  {} Could not verify key online (offline/custom network). Proceeding.",
+                    "  {} Could not verify account online (offline/custom network). Proceeding.",
                     "ℹ".cyan()
                 );
                 return Ok(key);
@@ -221,16 +229,24 @@ async fn prompt_key_terminal(cfg: &Config) -> Result<String> {
             continue;
         }
 
-        let spinner = create_spinner("Verifying API key with DeepSeek servers...");
-        let is_valid = validate_key(&cfg.base_url, &key).await;
+        let spinner = create_spinner("Connecting to DeepSeek account...");
+        let is_valid = validate_key_details(&cfg.base_url, &key).await;
         spinner.finish_and_clear();
 
         match is_valid {
-            Some(true) => {
-                println!("  {} API key verified successfully!", "✓".green().bold());
+            Some((true, Some(balance))) => {
+                println!(
+                    "  {} Authenticated in DeepSeek Account! (Balance: {})",
+                    "✓".green().bold(),
+                    balance.bold().green()
+                );
                 return Ok(key);
             }
-            Some(false) => {
+            Some((true, None)) => {
+                println!("  {} Authenticated successfully!", "✓".green().bold());
+                return Ok(key);
+            }
+            Some((false, _)) => {
                 println!(
                     "  {} DeepSeek rejected this key (401 Unauthorized).",
                     "⚠".yellow().bold()
@@ -285,21 +301,48 @@ async fn read_terminal_line() -> Result<String> {
     Ok(line)
 }
 
-pub async fn validate_key(base_url: &str, key: &str) -> Option<bool> {
-    let url = format!("{}/models", base_url.trim_end_matches('/'));
+pub async fn validate_key_details(base_url: &str, key: &str) -> Option<(bool, Option<String>)> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(6))
         .build()
         .ok()?;
 
-    let res = client
-        .get(&url)
+    // 1. Try account balance endpoint
+    let balance_url = format!("{}/user/balance", base_url.trim_end_matches('/'));
+    if let Ok(res) = client
+        .get(&balance_url)
         .header("Authorization", format!("Bearer {}", key))
         .send()
         .await
-        .ok()?;
+    {
+        if res.status().is_success() {
+            if let Ok(json) = res.json::<serde_json::Value>().await {
+                if let Some(infos) = json.get("balance_infos").and_then(|v| v.as_array()) {
+                    if let Some(first) = infos.first() {
+                        let total = first.get("total_balance").and_then(|v| v.as_str()).unwrap_or("0.00");
+                        let curr = first.get("currency").and_then(|v| v.as_str()).unwrap_or("USD");
+                        return Some((true, Some(format!("{} {}", total, curr))));
+                    }
+                }
+            }
+            return Some((true, None));
+        } else if res.status().as_u16() == 401 {
+            return Some((false, None));
+        }
+    }
 
-    Some(res.status().is_success())
+    // 2. Fallback to models check
+    let models_url = format!("{}/models", base_url.trim_end_matches('/'));
+    if let Ok(res) = client
+        .get(&models_url)
+        .header("Authorization", format!("Bearer {}", key))
+        .send()
+        .await
+    {
+        return Some((res.status().is_success(), None));
+    }
+
+    None
 }
 
 async fn run_local_server(listener: TcpListener, tx: oneshot::Sender<String>) {

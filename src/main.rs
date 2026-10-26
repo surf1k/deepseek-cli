@@ -141,6 +141,10 @@ enum Commands {
     #[command(alias = "auth")]
     Login,
 
+    /// Check your DeepSeek account balance and credit status
+    #[command(alias = "account")]
+    Balance,
+
     /// Show token and dollar cost breakdown of the latest session
     Cost,
 
@@ -243,6 +247,26 @@ async fn main() -> Result<()> {
             }
             Commands::Login => {
                 return auth::run_login_command(&mut cfg).await;
+            }
+            Commands::Balance => {
+                let api_key = require_api_key(&mut cfg).await?;
+                let client = api::DeepSeekClient::new(cfg.base_url.clone(), api_key);
+                let balance = client.get_account_balance().await?;
+                println!("{}", "DeepSeek Account Status & Balance:".bold().cyan());
+                println!(
+                    "  Status:          {}",
+                    if balance.is_available {
+                        "Active (Available)".green().bold()
+                    } else {
+                        "Low Balance / Inactive".red().bold()
+                    }
+                );
+                for info in &balance.balance_infos {
+                    println!("  Total Balance:   {} {}", info.total_balance.bold().green(), info.currency);
+                    println!("  Granted Credits: {} {}", info.granted_balance, info.currency);
+                    println!("  Topped-up Funds: {} {}", info.topped_up_balance, info.currency);
+                }
+                return Ok(());
             }
             Commands::Cost => {
                 let latest = session::load_latest_session()?;
