@@ -1,5 +1,5 @@
+use crate::auth;
 use crate::config::Config;
-use crate::ui::create_spinner;
 use anyhow::Result;
 use colored::*;
 use std::io::{stdin, stdout, Write};
@@ -7,8 +7,8 @@ use std::io::{stdin, stdout, Write};
 pub async fn run_onboarding(cfg: &mut Config) -> Result<String> {
     print_welcome_banner();
 
-    // Step 1: Prompt API Key with online verification
-    let api_key = prompt_api_key(&cfg.base_url).await?;
+    // Step 1: Authentication (Web browser login, manual key, or custom endpoint)
+    let api_key = auth::prompt_authentication(cfg).await?;
     cfg.api_key = Some(api_key.clone());
 
     // Step 2: Default Model Selection
@@ -54,83 +54,6 @@ fn print_welcome_banner() {
         "Welcome! Let's configure your DeepSeek environment in a few quick steps."
             .dimmed()
     );
-}
-
-async fn prompt_api_key(base_url: &str) -> Result<String> {
-    println!(
-        "{}",
-        "╭── Step 1: DeepSeek API Key ──────────────────────────────────────────╮".cyan().bold()
-    );
-    println!(
-        "│ Get your API key from:                                               │\n│   {}",
-        "https://platform.deepseek.com/api_keys".underline().blue()
-    );
-    println!("│                                                                      │");
-    println!("│ DeepSeek V3 & R1 offer state-of-the-art coding and reasoning at      │");
-    println!("│ ~95% lower cost than Claude 3.5 Sonnet or OpenAI o1.                 │");
-    println!(
-        "{}",
-        "╰──────────────────────────────────────────────────────────────────────╯".cyan().bold()
-    );
-
-    loop {
-        print!("\n{} ", "❯ Enter your API Key (sk-...):".bold().yellow());
-        let _ = stdout().flush();
-
-        let mut input = String::new();
-        stdin().read_line(&mut input)?;
-        let key = clean_key_input(&input);
-
-        if key.is_empty() {
-            println!("  {} API key cannot be empty. Please try again.", "✗".red());
-            continue;
-        }
-
-        // Validate API Key
-        let spinner = create_spinner("Verifying API key with DeepSeek servers...");
-        let is_valid = validate_key(base_url, &key).await;
-        spinner.finish_and_clear();
-
-        match is_valid {
-            Some(true) => {
-                println!(
-                    "  {} API key verified successfully! Connected to DeepSeek Platform.",
-                    "✓".green().bold()
-                );
-                return Ok(key);
-            }
-            Some(false) => {
-                println!(
-                    "  {} DeepSeek server rejected this key (401 Unauthorized).",
-                    "⚠".yellow().bold()
-                );
-                print!("  Do you want to retry entering your key? [Y/n]: ");
-                let _ = stdout().flush();
-                let mut retry_input = String::new();
-                let _ = stdin().read_line(&mut retry_input);
-                let choice = retry_input.trim();
-                if choice.eq_ignore_ascii_case("n") || choice.eq_ignore_ascii_case("no") {
-                    println!("  Using provided key without verification.");
-                    return Ok(key);
-                }
-            }
-            None => {
-                println!(
-                    "  {} Could not reach DeepSeek server (network unreachable/custom host).",
-                    "ℹ".cyan()
-                );
-                println!("  Proceeding with the entered key.");
-                return Ok(key);
-            }
-        }
-    }
-}
-
-fn clean_key_input(raw: &str) -> String {
-    raw.trim()
-        .trim_matches(|c| c == '\'' || c == '"' || c == '`')
-        .trim()
-        .to_string()
 }
 
 fn prompt_model_selection() -> String {
@@ -181,13 +104,14 @@ fn print_completion_box(cfg: &Config, model: &str) -> Result<()> {
 
     println!(
         "\n{}",
-        "╭── ✓ Onboarding Complete! ─────────────────────────────────────────────╮".green().bold()
+        "╭── ✓ Setup Complete! ──────────────────────────────────────────────────╮".green().bold()
     );
     println!(
         "│ Config saved:  {}",
         cfg_path.display().to_string().cyan()
     );
     println!("│ Default Model: {}", model.bold().green());
+    println!("│ Auto-compact:  {} (threshold: {} chars)", "enabled".green(), cfg.compact_threshold_chars);
     println!("│ Base URL:      {}", cfg.base_url.dimmed());
     println!(
         "{}",
@@ -196,7 +120,7 @@ fn print_completion_box(cfg: &Config, model: &str) -> Result<()> {
 
     println!("\n{}", "Quick Start Guide:".bold());
     println!(
-        "  • Interactive REPL:    {} (syntax highlighting, slash commands)",
+        "  • Interactive REPL:    {} (type /help or /model anytime)",
         "deepseek".cyan().bold()
     );
     println!(
@@ -212,12 +136,12 @@ fn print_completion_box(cfg: &Config, model: &str) -> Result<()> {
         "deepseek review".cyan()
     );
     println!(
-        "  • Natural Language Shell: {} (e.g. 'find files > 50mb')",
-        "deepseek sh \"<task>\"".cyan()
-    );
-    println!(
         "  • Track Cost & Savings:{} (calculates $ vs Claude 3.5 Sonnet)",
         "deepseek cost".yellow()
+    );
+    println!(
+        "  • Re-login / Switch:   {}",
+        "deepseek login".cyan()
     );
     println!(
         "\nType {} inside interactive mode for more commands.\n",
@@ -225,21 +149,4 @@ fn print_completion_box(cfg: &Config, model: &str) -> Result<()> {
     );
 
     Ok(())
-}
-
-async fn validate_key(base_url: &str, key: &str) -> Option<bool> {
-    let url = format!("{}/models", base_url.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(6))
-        .build()
-        .ok()?;
-
-    let res = client
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", key))
-        .send()
-        .await
-        .ok()?;
-
-    Some(res.status().is_success())
 }

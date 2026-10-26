@@ -1,5 +1,6 @@
 pub mod agent;
 mod api;
+pub mod auth;
 mod config;
 pub mod cost;
 mod files;
@@ -136,6 +137,10 @@ enum Commands {
     /// Manage saved conversation sessions
     Sessions,
 
+    /// Log in or authenticate with DeepSeek via browser or API key
+    #[command(alias = "auth")]
+    Login,
+
     /// Show token and dollar cost breakdown of the latest session
     Cost,
 
@@ -235,6 +240,9 @@ async fn main() -> Result<()> {
                     }
                 }
                 return Ok(());
+            }
+            Commands::Login => {
+                return auth::run_login_command(&mut cfg).await;
             }
             Commands::Cost => {
                 let latest = session::load_latest_session()?;
@@ -351,6 +359,7 @@ fn handle_config_action(action: ConfigAction, mut cfg: Config) -> Result<()> {
             println!("  Base URL:      {}", cfg.base_url);
             println!("  Default model: {}", cfg.default_model);
             println!("  Temperature:   {}", cfg.temperature);
+            println!("  Auto-compact:  {} (threshold: {} chars)", if cfg.auto_compact { "enabled".green() } else { "disabled".yellow() }, cfg.compact_threshold_chars);
             let masked_key = match cfg.resolve_api_key() {
                 Some(k) if k.len() > 8 => format!("{}...{}", &k[..4], &k[k.len() - 4..]),
                 Some(_) => "******".to_string(),

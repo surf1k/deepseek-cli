@@ -20,6 +20,10 @@ pub struct Config {
     pub system_prompt: Option<String>,
     #[serde(default = "default_true")]
     pub show_stats: bool,
+    #[serde(default = "default_true")]
+    pub auto_compact: bool,
+    #[serde(default = "default_compact_threshold")]
+    pub compact_threshold_chars: usize,
 }
 
 fn default_base_url() -> String {
@@ -38,6 +42,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_compact_threshold() -> usize {
+    40_000
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -48,6 +56,8 @@ impl Default for Config {
             max_tokens: None,
             system_prompt: None,
             show_stats: true,
+            auto_compact: true,
+            compact_threshold_chars: default_compact_threshold(),
         }
     }
 }

@@ -13,10 +13,12 @@
 <br/>
 
 ```
-   ___               ____            _      ____ _     ___ 
-  / _ \___ ___ ___  / __/__ ___ k   | |    / ___| |   |_ _|
- / // / -_) -_) _ \_\ \/ -_) -_) k  | |   | |   | |    | | 
-/____/\__/\__/_//_/___/\__/\__/_/_/ |_|   |_|   |___| |___|
+  ____                  ____            _       ____ _     ___ 
+ |  _ \  ___  ___ _ __ / ___|  ___  ___| | __  / ___| |   |_ _|
+ | | | |/ _ \/ _ \ '_ \\___ \ / _ \/ _ \ |/ / | |   | |    | | 
+ | |_| |  __/  __/ |_) |___) |  __/  __/   <  | |___| |___ | | 
+ |____/ \___|\___| .__/|____/ \___|\___|_|\_\  \____|_____|___|
+                 |_|                                           
 ```
 
 </div>
@@ -52,21 +54,31 @@ cargo install --git https://github.com/surf1k/deepseek-cli
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ Authentication & Configuration
 
-Set your API key via environment variable:
+When you first launch `deepseek`, an interactive setup wizard guides you:
+- **Web Browser Authentication**: Opens the DeepSeek Platform in your browser to log in and copy your API key, automatically captured by a local loopback listener.
+- **Manual API Key**: Paste directly in the terminal (`sk-...`).
+- **Custom Endpoints**: Connect to local Ollama (`http://localhost:11434/v1`), vLLM, or OpenRouter.
+
+### Login anytime:
+```bash
+deepseek login                    # Web browser or terminal auth
+```
+
+Or set via environment variable:
 ```bash
 export DEEPSEEK_API_KEY="sk-your-deepseek-api-key"
 ```
 
-Or store it persistently in `~/.config/deepseek-cli/config.toml`:
+Or store directly in `~/.config/deepseek-cli/config.toml`:
 ```bash
 deepseek config set-key sk-your-deepseek-api-key
 ```
 
 ### Useful Config Commands
 ```bash
-deepseek config show              # Display current settings
+deepseek config show              # Display current settings and auto-compact status
 deepseek config set-model r1      # Set default model to DeepSeek-R1
 deepseek config set-url <URL>     # Set custom base URL (e.g. http://localhost:11434/v1 for Ollama)
 ```
@@ -100,13 +112,15 @@ deepseek -C -a "Now add unit tests for that refactor"
 deepseek
 ```
 * **Tab-autocompleted slash commands**:
+  * `/model`, `/models` — Interactive model picker (or `/model v3`, `/model r1`).
+  * `/autocompact` — Toggle automatic context compaction and view threshold.
+  * `/compact` — Compress conversation history immediately.
   * `/cost` — Show exact session dollar cost and savings vs Claude 3.5.
-  * `/compact` — Compress conversation history to free context tokens.
+  * `/status` — Show complete session status, context usage, and active model.
   * `/auto` — Toggle auto-approval on/off for tool executions.
   * `/sessions` — List saved conversation sessions.
   * `/copy` — Copy the last response to clipboard.
   * `/tokens` — Show session token counts and cache stats.
-  * `/model <v3|r1>` — Hot-switch active model mid-conversation.
   * `/save [path]` — Export chat session to Markdown.
   * `/load <path>` — Inject file content into chat context.
   * `/retry` — Regenerate the last response.

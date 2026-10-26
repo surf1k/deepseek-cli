@@ -14,6 +14,7 @@ use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 use std::fs;
+use std::io::{stdin, stdout, Write};
 
 struct CommandCompleter {
     commands: Vec<&'static str>,
@@ -23,9 +24,9 @@ impl CommandCompleter {
     fn new() -> Self {
         Self {
             commands: vec![
-                "/help", "/model", "/clear", "/copy", "/tokens", "/cost", "/compact",
-                "/auto", "/sessions", "/save", "/load", "/system", "/temp", "/retry",
-                "/info", "/exit", "/quit",
+                "/help", "/model", "/models", "/compact", "/autocompact", "/cost",
+                "/auto", "/status", "/clear", "/copy", "/tokens", "/sessions",
+                "/save", "/load", "/system", "/temp", "/retry", "/info", "/exit", "/quit",
             ],
         }
     }
@@ -254,6 +255,29 @@ impl ReplSession {
             "/compact" => {
                 let _ = compact_history(&self.client, &self.model, &mut self.messages).await;
             }
+            "/autocompact" => {
+                if parts.len() > 1 {
+                    match parts[1].to_lowercase().as_str() {
+                        "on" | "true" | "1" => self.config.auto_compact = true,
+                        "off" | "false" | "0" => self.config.auto_compact = false,
+                        _ => println!("Usage: /autocompact [on|off]"),
+                    }
+                } else {
+                    self.config.auto_compact = !self.config.auto_compact;
+                }
+                let status = if self.config.auto_compact {
+                    "enabled".green().bold()
+                } else {
+                    "disabled".yellow().bold()
+                };
+                println!(
+                    "{} Auto-compact is now {} (threshold: {} chars).",
+                    "🗜️".cyan(),
+                    status,
+                    self.config.compact_threshold_chars
+                );
+                let _ = self.config.save();
+            }
             "/auto" => {
                 self.auto_approve = !self.auto_approve;
                 if self.auto_approve {
@@ -286,17 +310,13 @@ impl ReplSession {
                     println!("{} No answer to copy yet.", "ℹ".yellow());
                 }
             }
-            "/model" | "/m" => {
+            "/model" | "/models" | "/m" => {
                 if parts.len() < 2 {
-                    println!(
-                        "Current model: {}. Options: {} or {}",
-                        self.model.bold().green(),
-                        "v3 (deepseek-chat)".cyan(),
-                        "r1 (deepseek-reasoner)".cyan()
-                    );
+                    self.interactive_model_select().await;
                 } else {
                     let new_model = Config::canonicalize_model(parts[1]);
-                    self.model = new_model;
+                    self.model = new_model.clone();
+                    self.session_data.model = new_model;
                     println!("Model switched to {}", self.model.bold().cyan());
                 }
             }
@@ -383,22 +403,37 @@ impl ReplSession {
                     println!("Nothing to retry.");
                 }
             }
-            "/info" => {
-                println!("DeepSeek CLI Session:");
-                println!("  Model:       {}", self.model.cyan());
-                println!("  Base URL:    {}", self.config.base_url.dimmed());
-                println!("  Temperature: {}", self.config.temperature);
-                println!("  Turns:       {}", self.messages.len());
-                println!("  Cost:        {}", format_cost_line(&self.session_stats, &self.model));
+            "/status" | "/info" => {
+                println!("{}", "DeepSeek CLI Session Status:".bold().cyan());
+                println!("  Active Model:   {}", self.model.bold().green());
+                println!(
+                    "  Auto-compact:   {}",
+                    if self.config.auto_compact {
+                        "enabled".green()
+                    } else {
+                        "disabled".yellow()
+                    }
+                );
+                println!(
+                    "  Context Limit:  {} chars threshold",
+                    self.config.compact_threshold_chars
+                );
+                println!("  Base URL:       {}", self.config.base_url.dimmed());
+                println!("  Temperature:    {}", self.config.temperature);
+                println!("  Messages:       {} turns", self.messages.len());
+                println!("  Tokens Used:    {} total", self.session_stats.total_tokens);
+                println!("  Cost:           {}", format_cost_line(&self.session_stats, &self.model));
             }
             "/help" | "/h" => {
                 println!("{}", "Available REPL Commands:".bold());
                 println!("  {}                Show this help message", "/help".yellow());
+                println!("  {}       Interactive model picker (v3 / r1)", "/model, /models".yellow());
                 println!("  {}                Show exact session cost in $ and savings", "/cost".yellow());
-                println!("  {}             Compact history to free context tokens", "/compact".yellow());
+                println!("  {}             Compact history immediately", "/compact".yellow());
+                println!("  {}         Toggle automatic context compaction", "/autocompact".yellow());
+                println!("  {}                Show session status & context usage", "/status".yellow());
                 println!("  {}                Toggle auto-approval for coding actions", "/auto".yellow());
                 println!("  {}            List saved sessions", "/sessions".yellow());
-                println!("  {}       Switch model (v3 / r1)", "/model <name>".yellow());
                 println!("  {}                Copy last response to clipboard", "/copy".yellow());
                 println!("  {}               Show token usage stats", "/tokens".yellow());
                 println!("  {}               Regenerate last response", "/retry".yellow());
@@ -417,7 +452,73 @@ impl ReplSession {
         Ok(true)
     }
 
+    async fn interactive_model_select(&mut self) {
+        println!("\n{}", "Select Active Model:".bold().cyan());
+        let v3_active = self.model.contains("chat");
+        let r1_active = self.model.contains("reasoner");
+
+        println!(
+            "  {} DeepSeek-V3  {} - Blazing fast, top coding skills{}",
+            "[1]".yellow().bold(),
+            "(deepseek-chat)".bold(),
+            if v3_active { " [active]".green().bold() } else { "".normal() }
+        );
+        println!(
+            "  {} DeepSeek-R1  {} - DeepThink reasoning, complex math & logic{}",
+            "[2]".yellow().bold(),
+            "(deepseek-reasoner)".bold(),
+            if r1_active { " [active]".green().bold() } else { "".normal() }
+        );
+        print!("\n{} ", "Select [1 or 2, Enter to keep current]:".bold());
+        let _ = stdout().flush();
+
+        let mut choice = String::new();
+        let _ = stdin().read_line(&mut choice);
+
+        match choice.trim() {
+            "1" | "v3" | "chat" => {
+                self.model = "deepseek-chat".to_string();
+                self.session_data.model = self.model.clone();
+                println!("Switched to {}", self.model.bold().green());
+            }
+            "2" | "r1" | "reasoner" => {
+                self.model = "deepseek-reasoner".to_string();
+                self.session_data.model = self.model.clone();
+                println!("Switched to {}", self.model.bold().cyan());
+            }
+            _ => {
+                println!("Keeping current model: {}", self.model.bold().cyan());
+            }
+        }
+    }
+
+    async fn check_and_auto_compact(&mut self) {
+        if !self.config.auto_compact {
+            return;
+        }
+
+        let total_chars: usize = self
+            .messages
+            .iter()
+            .filter_map(|m| m.content.as_ref())
+            .map(|c| c.len())
+            .sum();
+
+        if total_chars > self.config.compact_threshold_chars {
+            println!(
+                "{}",
+                format!(
+                    "🗜️ Context threshold reached (~{} chars) — auto-compacting history...",
+                    total_chars
+                )
+                .dimmed()
+            );
+            let _ = compact_history(&self.client, &self.model, &mut self.messages).await;
+        }
+    }
+
     async fn process_agent_turn(&mut self, prompt: &str) {
+        self.check_and_auto_compact().await;
         let mut agent = Agent::new(&self.client, self.model.clone(), self.auto_approve);
         agent.session.messages = self.messages.clone();
 
@@ -438,6 +539,7 @@ impl ReplSession {
     }
 
     async fn process_chat_turn(&mut self, prompt: &str) {
+        self.check_and_auto_compact().await;
         self.messages.push(AgentMessage::user(prompt));
 
         let spinner = create_spinner("Connecting to DeepSeek...");
