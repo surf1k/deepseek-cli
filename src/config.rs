@@ -15,7 +15,11 @@ pub struct Config {
     #[serde(default = "default_temperature")]
     pub temperature: f32,
     #[serde(default)]
+    pub max_tokens: Option<u32>,
+    #[serde(default)]
     pub system_prompt: Option<String>,
+    #[serde(default = "default_true")]
+    pub show_stats: bool,
 }
 
 fn default_base_url() -> String {
@@ -30,6 +34,10 @@ fn default_temperature() -> f32 {
     1.0
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -37,7 +45,9 @@ impl Default for Config {
             base_url: default_base_url(),
             default_model: default_model(),
             temperature: default_temperature(),
+            max_tokens: None,
             system_prompt: None,
+            show_stats: true,
         }
     }
 }
@@ -95,8 +105,10 @@ impl Config {
 
     pub fn canonicalize_model(input: &str) -> String {
         match input.to_lowercase().as_str() {
-            "v3" | "chat" | "deepseek-chat" => "deepseek-chat".to_string(),
-            "r1" | "reasoner" | "deepseek-reasoner" | "think" => "deepseek-reasoner".to_string(),
+            "v3" | "chat" | "deepseek-v3" | "deepseek-chat" => "deepseek-chat".to_string(),
+            "r1" | "reasoner" | "deepseek-r1" | "deepseek-reasoner" | "think" => {
+                "deepseek-reasoner".to_string()
+            }
             other => other.to_string(),
         }
     }
