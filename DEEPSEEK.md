@@ -20,14 +20,17 @@ deepseek-cli/
 │   ├── main.rs              # CLI entry point, clap argument parsing, subcommand routing
 │   ├── api.rs               # DeepSeek & OpenAI-compatible client, SSE streaming, tool-calling
 │   ├── agent/               # Autonomous ReAct agent loop
-│   │   └── mod.rs           # Multi-turn agent, permission engine, subagent delegation
+│   │   ├── mod.rs           # Multi-turn agent, permission engine, subagent delegation
+│   │   └── compact.rs       # Context compaction engine (summarization & token pruning)
+│   ├── session.rs           # Session persistence & resume engine (~/.config/deepseek-cli/sessions/)
+│   ├── cost.rs              # DeepSeek pricing calculator & Claude 3.5 savings comparison
 │   ├── tools/               # Agent tool implementations
 │   │   ├── mod.rs           # Tool dispatcher & JSON Schema definitions
 │   │   ├── fs.rs            # read_file, write_file, edit_file (surgical replacement)
 │   │   ├── diff.rs          # Colored unified diff engine (similar crate)
 │   │   ├── bash.rs          # Shell execution with output truncation
 │   │   └── search.rs        # Fast glob & grep search
-│   ├── repl.rs              # Interactive REPL with Tab autocompletion & history
+│   ├── repl.rs              # Interactive REPL with Tab autocompletion, /cost, /compact
 │   ├── git.rs               # AI Git commit generator & diff reviewer
 │   ├── shell.rs             # Natural language shell assistant
 │   ├── files.rs             # File attachment & line-range parsing

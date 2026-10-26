@@ -1,9 +1,11 @@
 pub mod agent;
 mod api;
 mod config;
+pub mod cost;
 mod files;
 mod git;
 mod repl;
+pub mod session;
 mod shell;
 pub mod tools;
 mod ui;
@@ -64,6 +66,14 @@ struct Cli {
     #[arg(short = 'c', long)]
     copy: bool,
 
+    /// Continue / resume previous conversation session
+    #[arg(short = 'C', long = "continue", alias = "resume")]
+    continue_session: bool,
+
+    /// Show exact dollar cost breakdown of previous session
+    #[arg(long)]
+    cost: bool,
+
     /// Run in autonomous agent mode (like Claude Code)
     #[arg(short = 'a', long)]
     agent: bool,
@@ -121,6 +131,12 @@ enum Commands {
         #[arg(short, long)]
         model: Option<String>,
     },
+
+    /// Manage saved conversation sessions
+    Sessions,
+
+    /// Show token and dollar cost breakdown of the latest session
+    Cost,
 
     /// Manage configuration, models, and API keys
     Config {
@@ -199,7 +215,38 @@ async fn main() -> Result<()> {
                 agent.run_task(&query).await?;
                 return Ok(());
             }
+            Commands::Sessions => {
+                println!("{}", "Saved Conversation Sessions:".bold().cyan());
+                if let Ok(sessions) = session::list_sessions() {
+                    if sessions.is_empty() {
+                        println!("  No saved sessions found.");
+                    } else {
+                        for s in sessions.iter().take(15) {
+                            let cost = cost::calculate_cost(&s.stats, &s.model);
+                            println!(
+                                "  • {} [{}] - {} messages (Cost: ${:.5})",
+                                s.id.cyan().bold(),
+                                s.model,
+                                s.messages.len(),
+                                cost.actual_cost_usd
+                            );
+                        }
+                    }
+                }
+                return Ok(());
+            }
+            Commands::Cost => {
+                let latest = session::load_latest_session()?;
+                cost::print_detailed_cost(&latest.stats, &latest.model);
+                return Ok(());
+            }
         }
+    }
+
+    if cli.cost {
+        let latest = session::load_latest_session()?;
+        cost::print_detailed_cost(&latest.stats, &latest.model);
+        return Ok(());
     }
 
     // Resolve API key
@@ -209,7 +256,17 @@ async fn main() -> Result<()> {
     if cli.agent {
         let client = api::DeepSeekClient::new(cfg.base_url.clone(), api_key);
         let selected_model = cli.model.unwrap_or_else(|| "deepseek-chat".to_string());
-        let mut agent = agent::Agent::new(&client, selected_model, cli.auto);
+        let mut agent = if cli.continue_session {
+            match session::load_latest_session() {
+                Ok(s) => {
+                    println!("{} Resumed session {}", "↻".green(), s.id.cyan());
+                    agent::Agent::from_session(&client, s, cli.auto)
+                }
+                Err(_) => agent::Agent::new(&client, selected_model, cli.auto),
+            }
+        } else {
+            agent::Agent::new(&client, selected_model, cli.auto)
+        };
         let task = cli.prompt.join(" ");
         if task.trim().is_empty() {
             bail!("Please provide a task to run with --agent, e.g. 'deepseek -a add healthcheck endpoint'");
@@ -230,7 +287,20 @@ async fn main() -> Result<()> {
 
     // If no prompt, no files, and no piped stdin -> launch interactive REPL
     if !has_prompt && !has_files && !has_stdin {
-        let mut session = ReplSession::new(cfg, cli.model);
+        let mut session = if cli.continue_session {
+            match session::load_latest_session() {
+                Ok(s) => {
+                    println!("{} Resumed session {}", "↻".green(), s.id.cyan());
+                    ReplSession::from_session(cfg, s)
+                }
+                Err(e) => {
+                    eprintln!("{} {}", "Warning:".yellow(), e);
+                    ReplSession::new(cfg, cli.model)
+                }
+            }
+        } else {
+            ReplSession::new(cfg, cli.model)
+        };
         return session.run().await;
     }
 
@@ -405,6 +475,9 @@ async fn run_one_shot(
                     None
                 };
                 renderer.finish(stats_ref);
+                if !cli.no_stats && cfg.show_stats {
+                    println!("  {}", cost::format_cost_line(&stats, &model));
+                }
             } else {
                 println!();
             }

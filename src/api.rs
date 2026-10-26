@@ -143,7 +143,7 @@ pub struct ChatResponseChoice {
     pub finish_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GenerationStats {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,

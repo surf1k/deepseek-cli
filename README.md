@@ -2,8 +2,8 @@
 
 # ⚡ DeepSeek CLI (`deepseek`)
 
-**The open-source, blazing-fast autonomous coding agent & terminal assistant for DeepSeek-V3 & DeepSeek-R1 reasoning models, written in pure Rust.**
-*(Full Claude Code & OpenCode experience powered by DeepSeek API & local LLMs)*
+**The ultimate open-source, blazing-fast autonomous coding agent & terminal assistant for DeepSeek-V3 & DeepSeek-R1 reasoning models, written in pure Rust.**
+*(The complete Claude Code & OpenCode experience, running on DeepSeek API and local LLMs)*
 
 [![Rust](https://img.shields.io/badge/rust-1.80%2B-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
@@ -23,37 +23,32 @@
 
 ---
 
-## ✨ Highlights
+## ⚡ One-Line Install
 
-- 🤖 **Autonomous Coding Agent (`deepseek agent`)**: Replicates the **Claude Code / OpenCode** workflow. The agent autonomously plans, searches files (`glob`/`grep`), reads code (`read_file`), applies surgical edits (`edit_file`), and runs shell commands (`bash`) in an interactive loop until your task is done.
-- 🎨 **Visual Diff Engine**: Surgical file modifications previewed in color-coded unified diff format (`+` green / `-` red) before applying.
-- 🛡️ **Fine-Grained Permission System**: Read-only actions run safely; mutating actions (`edit_file`, `write_file`, `bash`) require approval (`[y] Yes | [n] No | [a] Always allow`), or use `--auto` (`-y`) for unattended background tasks.
-- 🧠 **Project Memory**: Automatically detects and ingests `DEEPSEEK.md`, `CLAUDE.md`, or `AGENTS.md` instructions from your workspace.
-- ⚡ **Blazing Fast (<10ms startup)**: Single static binary in pure async Rust (`tokio` + `reqwest`), no heavy Python or Node.js runtime required.
-- 💭 **DeepThink (R1 Reasoning) Visualizer**: Live streaming of DeepSeek-R1's inner thought process with elapsed timer and reasoning token counter.
-- 📊 **Real-time Performance & Cache Stats**: Displays tokens/second speed, total token counts, and DeepSeek **Context Cache hit percentage**.
-- 🛠️ **Built-in Developer Utilities**:
-  - `deepseek commit`: Automated Conventional Commits from staged/unstaged diffs.
-  - `deepseek review`: Security & quality code review of active changes.
-  - `deepseek sh`: Natural language terminal assistant with one-click command execution.
-- 💬 **Interactive REPL**: Multi-turn dialogue with Tab autocompletion (`/copy`, `/tokens`, `/model`, `/save`, `/load`, `/retry`), multiline input (`\`), and persistent history.
+Install instantly on Linux or macOS:
+```bash
+curl -fsSL https://raw.githubusercontent.com/surf1k/deepseek-cli/main/install.sh | bash
+```
 
----
-
-## 🚀 Installation
-
-### Via Cargo
+Or via Cargo:
 ```bash
 cargo install --git https://github.com/surf1k/deepseek-cli
 ```
 
-### Build from Source
-```bash
-git clone https://github.com/surf1k/deepseek-cli.git
-cd deepseek-cli
-cargo build --release
-cp target/release/deepseek ~/.local/bin/ # or /usr/local/bin
-```
+---
+
+## ✨ Highlights
+
+- 🤖 **Autonomous Coding Agent (`deepseek agent`)**: Replicates the **Claude Code / OpenCode** workflow. The agent autonomously plans, searches files (`glob`/`grep`), reads code (`read_file`), applies surgical edits (`edit_file`), and runs shell commands (`bash`) in an interactive loop.
+- 👥 **Multi-Agent Delegation (`spawn_subagent`)**: The primary agent can spawn focused subagents (e.g. *Codebase Researcher*, *Test Runner*, *Security Auditor*) in separate sandboxed contexts to parallelize work without cluttering conversation memory.
+- 🎨 **Visual Diff Engine**: Surgical file modifications previewed in color-coded unified diff format (`+` green / `-` red) before applying.
+- 💰 **Real-Time Cost & Claude Savings Tracker (`/cost`)**: Calculates exact API cost down to the fraction of a cent based on DeepSeek's official pricing (including Context Cache hits at $0.14/1M) and shows exact dollar savings compared to Claude 3.5 Sonnet.
+- 🗜️ **Context Compaction (`/compact` & Auto-Compaction)**: When conversations grow large, the compaction engine summarizes prior history while preserving architectural decisions and modified file states.
+- 💾 **Session Persistence & Resume (`-C` / `--continue`)**: Pick up right where you left off across terminal sessions.
+- 🛡️ **Fine-Grained Permission System**: Read-only actions run safely; mutating actions (`edit_file`, `write_file`, `bash`) require approval (`[y] Yes | [n] No | [a] Always allow`), or use `--auto` (`-y`) for unattended runs.
+- 🧠 **Project Memory**: Automatically detects and ingests `DEEPSEEK.md`, `CLAUDE.md`, or `AGENTS.md` instructions from your repository.
+- ⚡ **Blazing Fast (<10ms startup)**: Single static binary in pure async Rust (`tokio` + `reqwest`), no heavy Python or Node.js runtime required.
+- 💭 **DeepThink (R1 Reasoning) Visualizer**: Live streaming of DeepSeek-R1's inner thought process with elapsed timer and reasoning token counter.
 
 ---
 
@@ -78,7 +73,7 @@ deepseek config set-url <URL>     # Set custom base URL (e.g. http://localhost:1
 
 ---
 
-## 🤖 Autonomous Agent Mode (Claude Code in Rust)
+## 🤖 Autonomous Coding Agent (Claude Code in Pure Rust)
 
 Let DeepSeek work directly inside your codebase:
 
@@ -91,24 +86,24 @@ deepseek agent -y "Add healthcheck endpoint to server and update README.md"
 
 # Short syntax
 deepseek -a "Refactor database query logic in repository.rs"
-```
 
-### How the Agent Works:
-1. **Discovers**: Uses `grep` and `glob` to locate relevant files.
-2. **Inspects**: Uses `read_file` to view lines of code without blowing context.
-3. **Edits**: Uses `edit_file` to perform exact character replacements and shows a color diff.
-4. **Verifies**: Runs `bash` (e.g. `cargo test`, `npm test`) to verify the fix works.
-5. **Wraps up**: Explains what was changed.
+# Resume previous session
+deepseek -C -a "Now add unit tests for that refactor"
+```
 
 ---
 
 ## 💡 Developer Workflows
 
-### 1. Interactive REPL Chat
+### 1. Interactive Agent REPL
 ```bash
 deepseek
 ```
 * **Tab-autocompleted slash commands**:
+  * `/cost` — Show exact session dollar cost and savings vs Claude 3.5.
+  * `/compact` — Compress conversation history to free context tokens.
+  * `/auto` — Toggle auto-approval on/off for tool executions.
+  * `/sessions` — List saved conversation sessions.
   * `/copy` — Copy the last response to clipboard.
   * `/tokens` — Show session token counts and cache stats.
   * `/model <v3|r1>` — Hot-switch active model mid-conversation.
@@ -117,26 +112,42 @@ deepseek
   * `/retry` — Regenerate the last response.
   * `/exit` — Exit REPL.
 
-### 2. AI Git Commit Generator
-Stage your changes and generate a clean conventional commit:
+### 2. Check Session Cost & Economics
+```bash
+deepseek cost
+```
+```text
+Session Economics & Cost Breakdown:
+  Model used:          deepseek-chat
+  Cache hit tokens:    12,480 tokens ($0.14/1M)
+  Cache miss tokens:   1,120 tokens ($0.28/1M)
+  Completion tokens:   840 tokens ($2.19/1M)
+  Total tokens:        14,440
+  ---------------------------------------------
+  DeepSeek API Cost:   $0.00390
+  Claude 3.5 Cost:     $0.0534
+  Money Saved:         $0.0495 🚀
+```
+
+### 3. AI Git Commit Generator
 ```bash
 git add src/
 deepseek commit
 ```
 
-### 3. AI Code Review
+### 4. AI Code Review
 ```bash
 deepseek review
 # Or fast review with V3:
 deepseek review -m v3
 ```
 
-### 4. Natural Language Shell Helper
+### 5. Natural Language Shell Helper
 ```bash
 deepseek sh "find all files larger than 100MB and sort them by size"
 ```
 
-### 5. Attach Files & Line Ranges
+### 6. Attach Files & Line Ranges
 ```bash
 deepseek -f src/api.rs:40-95 "Review this stream handling logic"
 deepseek -f "src/**/*.rs" "Suggest architectural improvements"
@@ -150,12 +161,14 @@ deepseek -f "src/**/*.rs" "Suggest architectural improvements"
 Usage: deepseek [OPTIONS] [PROMPT]... [COMMAND]
 
 Commands:
-  agent   Run an autonomous coding agent with file editing, search, and shell execution (alias: a)
-  commit  Generate a Conventional Commit message from current git diff (alias: c)
-  review  Perform a deep code review of staged/unstaged git changes (alias: r)
-  sh      Generate and optionally execute a shell command from natural language (alias: run)
-  config  Manage configuration, models, and API keys
-  help    Print this message or help for given subcommand
+  agent     Run an autonomous coding agent with file editing, search, and shell execution (alias: a)
+  commit    Generate a Conventional Commit message from current git diff (alias: c)
+  review    Perform a deep code review of staged/unstaged git changes (alias: r)
+  sh        Generate and optionally execute a shell command from natural language (alias: run)
+  sessions  Manage saved conversation sessions
+  cost      Show token and dollar cost breakdown of the latest session
+  config    Manage configuration, models, and API keys
+  help      Print this message or help for given subcommand
 
 Arguments:
   [PROMPT]...  Prompt / question (leave empty for REPL mode)
@@ -163,6 +176,8 @@ Arguments:
 Options:
   -a, --agent                      Run in autonomous agent mode (like Claude Code)
   -y, --auto                       Auto-approve tool executions in agent mode
+  -C, --continue                   Continue / resume previous conversation session
+      --cost                       Show exact dollar cost breakdown of previous session
   -m, --model <MODEL>              Model: 'v3' (deepseek-chat) or 'r1' (deepseek-reasoner)
   -s, --system <SYSTEM>            Custom system prompt
   -f, --file <SPEC>                Attach file, range, or glob (-f src/main.rs:10-50 -f "src/**/*.rs")

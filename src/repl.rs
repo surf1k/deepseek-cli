@@ -1,5 +1,9 @@
-use crate::api::{DeepSeekClient, GenerationStats, Message, StreamChunk};
+use crate::agent::compact::compact_history;
+use crate::agent::Agent;
+use crate::api::{AgentMessage, DeepSeekClient, GenerationStats, StreamChunk};
 use crate::config::Config;
+use crate::cost::{format_cost_line, print_detailed_cost};
+use crate::session::{list_sessions, save_session, SessionData};
 use crate::ui::{copy_to_clipboard, create_spinner, print_banner, StreamRenderer};
 use anyhow::Result;
 use colored::*;
@@ -19,8 +23,9 @@ impl CommandCompleter {
     fn new() -> Self {
         Self {
             commands: vec![
-                "/help", "/model", "/clear", "/copy", "/tokens", "/save", "/load",
-                "/system", "/temp", "/retry", "/info", "/exit", "/quit",
+                "/help", "/model", "/clear", "/copy", "/tokens", "/cost", "/compact",
+                "/auto", "/sessions", "/save", "/load", "/system", "/temp", "/retry",
+                "/info", "/exit", "/quit",
             ],
         }
     }
@@ -64,9 +69,11 @@ pub struct ReplSession {
     config: Config,
     client: DeepSeekClient,
     model: String,
-    messages: Vec<Message>,
+    messages: Vec<AgentMessage>,
     last_assistant_response: Option<String>,
     session_stats: GenerationStats,
+    auto_approve: bool,
+    session_data: SessionData,
 }
 
 impl ReplSession {
@@ -80,8 +87,10 @@ impl ReplSession {
 
         let mut messages = Vec::new();
         if let Some(sys) = &config.system_prompt {
-            messages.push(Message::system(sys.clone()));
+            messages.push(AgentMessage::system(sys.clone()));
         }
+
+        let session_data = SessionData::new(canonical_model.clone(), messages.clone());
 
         Self {
             config,
@@ -90,6 +99,29 @@ impl ReplSession {
             messages,
             last_assistant_response: None,
             session_stats: GenerationStats::default(),
+            auto_approve: false,
+            session_data,
+        }
+    }
+
+    pub fn from_session(config: Config, session: SessionData) -> Self {
+        let api_key = config
+            .resolve_api_key()
+            .expect("API key must be resolved before starting REPL");
+        let client = DeepSeekClient::new(config.base_url.clone(), api_key);
+        let model = session.model.clone();
+        let messages = session.messages.clone();
+        let stats = session.stats.clone();
+
+        Self {
+            config,
+            client,
+            model,
+            messages,
+            last_assistant_response: None,
+            session_stats: stats,
+            auto_approve: false,
+            session_data: session,
         }
     }
 
@@ -112,7 +144,7 @@ impl ReplSession {
             format!("[DeepSeek-V3 ⚡]").green().bold()
         };
 
-        println!("  Active: {} (Tab for autocompletion)\n", model_badge);
+        println!("  Active: {} · Type {} for cost, {} for tools\n", model_badge, "/cost".yellow(), "/help".yellow());
 
         let mut multiline_buffer = String::new();
 
@@ -133,7 +165,6 @@ impl ReplSession {
                 Ok(line) => {
                     let trimmed = line.trim();
 
-                    // Check for multiline trailing slash continuation
                     if trimmed.ends_with('\\') {
                         let without_slash = &trimmed[..trimmed.len() - 1];
                         multiline_buffer.push_str(without_slash);
@@ -151,7 +182,6 @@ impl ReplSession {
 
                     let _ = rl.add_history_entry(&input);
 
-                    // Check for REPL commands
                     if input.starts_with('/') {
                         let should_continue = self.handle_command(&input).await?;
                         if !should_continue {
@@ -160,8 +190,17 @@ impl ReplSession {
                         continue;
                     }
 
-                    // Process chat input
-                    self.process_turn(&input).await;
+                    // Check if input is a coding action request that should run via Agent
+                    if self.should_route_to_agent(&input) {
+                        self.process_agent_turn(&input).await;
+                    } else {
+                        self.process_chat_turn(&input).await;
+                    }
+
+                    // Save session state
+                    self.session_data.messages = self.messages.clone();
+                    self.session_data.stats = self.session_stats.clone();
+                    let _ = save_session(&self.session_data);
                 }
                 Err(ReadlineError::Interrupted) => {
                     println!("^C (type /exit or press Ctrl+D to quit)");
@@ -185,6 +224,21 @@ impl ReplSession {
         Ok(())
     }
 
+    fn should_route_to_agent(&self, input: &str) -> bool {
+        let lower = input.to_lowercase();
+        lower.starts_with("fix ")
+            || lower.starts_with("edit ")
+            || lower.starts_with("create ")
+            || lower.starts_with("run ")
+            || lower.starts_with("test ")
+            || lower.starts_with("build ")
+            || lower.starts_with("refactor ")
+            || lower.starts_with("add ")
+            || lower.starts_with("delete ")
+            || lower.starts_with("search ")
+            || lower.starts_with("find ")
+    }
+
     async fn handle_command(&mut self, input: &str) -> Result<bool> {
         let parts: Vec<&str> = input.split_whitespace().collect();
         let cmd = parts[0].to_lowercase();
@@ -193,6 +247,28 @@ impl ReplSession {
             "/exit" | "/quit" | "/q" => {
                 println!("Bye! 👋");
                 return Ok(false);
+            }
+            "/cost" => {
+                print_detailed_cost(&self.session_stats, &self.model);
+            }
+            "/compact" => {
+                let _ = compact_history(&self.client, &self.model, &mut self.messages).await;
+            }
+            "/auto" => {
+                self.auto_approve = !self.auto_approve;
+                if self.auto_approve {
+                    println!("{} Auto-approval enabled for tool actions.", "🛡️".green());
+                } else {
+                    println!("{} Interactive approval enabled.", "🛡️".cyan());
+                }
+            }
+            "/sessions" => {
+                println!("{}", "Saved Sessions:".bold().cyan());
+                if let Ok(sessions) = list_sessions() {
+                    for s in sessions.iter().take(10) {
+                        println!("  {} [{}] - {} messages", s.id.cyan(), s.model, s.messages.len());
+                    }
+                }
             }
             "/clear" | "/c" => {
                 self.messages.retain(|m| m.role == "system");
@@ -241,6 +317,7 @@ impl ReplSession {
                 println!("  Total tokens used:       {}", self.session_stats.total_tokens);
                 println!("  Context cache hits:      {} tokens", self.session_stats.cache_hit_tokens);
                 println!("  Messages in context:     {}", self.messages.len());
+                println!("  {}", format_cost_line(&self.session_stats, &self.model));
             }
             "/system" => {
                 if parts.len() < 2 {
@@ -254,7 +331,7 @@ impl ReplSession {
                 } else {
                     let sys_prompt = parts[1..].join(" ");
                     self.messages.retain(|m| m.role != "system");
-                    self.messages.insert(0, Message::system(&sys_prompt));
+                    self.messages.insert(0, AgentMessage::system(&sys_prompt));
                     println!("{}", "✓ System prompt updated.".green());
                 }
             }
@@ -276,7 +353,7 @@ impl ReplSession {
                     let file_path = parts[1];
                     match fs::read_to_string(file_path) {
                         Ok(content) => {
-                            self.messages.push(Message::user(format!(
+                            self.messages.push(AgentMessage::user(format!(
                                 "Loaded context from {}:\n\n{}",
                                 file_path, content
                             )));
@@ -291,13 +368,13 @@ impl ReplSession {
             "/retry" => {
                 if let Some(last_msg) = self.messages.last().cloned() {
                     if last_msg.role == "assistant" {
-                        self.messages.pop(); // Remove assistant
+                        self.messages.pop();
                         if let Some(user_msg) = self.messages.last().cloned() {
                             if user_msg.role == "user" {
-                                self.messages.pop(); // Remove user to re-process
+                                self.messages.pop();
                                 if let Some(ref text) = user_msg.content {
                                     println!("{} Retrying last prompt...", "↻".yellow());
-                                    self.process_turn(text).await;
+                                    self.process_chat_turn(text).await;
                                 }
                             }
                         }
@@ -311,11 +388,16 @@ impl ReplSession {
                 println!("  Model:       {}", self.model.cyan());
                 println!("  Base URL:    {}", self.config.base_url.dimmed());
                 println!("  Temperature: {}", self.config.temperature);
-                println!("  History:     {} turns", self.messages.len());
+                println!("  Turns:       {}", self.messages.len());
+                println!("  Cost:        {}", format_cost_line(&self.session_stats, &self.model));
             }
             "/help" | "/h" => {
                 println!("{}", "Available REPL Commands:".bold());
                 println!("  {}                Show this help message", "/help".yellow());
+                println!("  {}                Show exact session cost in $ and savings", "/cost".yellow());
+                println!("  {}             Compact history to free context tokens", "/compact".yellow());
+                println!("  {}                Toggle auto-approval for coding actions", "/auto".yellow());
+                println!("  {}            List saved sessions", "/sessions".yellow());
                 println!("  {}       Switch model (v3 / r1)", "/model <name>".yellow());
                 println!("  {}                Copy last response to clipboard", "/copy".yellow());
                 println!("  {}               Show token usage stats", "/tokens".yellow());
@@ -325,9 +407,7 @@ impl ReplSession {
                 println!("  {}       Update system prompt", "/system <text>".yellow());
                 println!("  {}        Export session to Markdown", "/save [file]".yellow());
                 println!("  {}        Load file into context", "/load <file>".yellow());
-                println!("  {}                Show session info", "/info".yellow());
                 println!("  {}                Exit REPL", "/exit".yellow());
-                println!("\n  {} End a line with {} to write multiline input.", "Tip:".cyan(), "\\".bold());
             }
             _ => {
                 println!("{}: Unknown command '{}'. Type {} for help.", "Notice".yellow(), cmd, "/help".cyan());
@@ -337,8 +417,28 @@ impl ReplSession {
         Ok(true)
     }
 
-    async fn process_turn(&mut self, prompt: &str) {
-        self.messages.push(Message::user(prompt));
+    async fn process_agent_turn(&mut self, prompt: &str) {
+        let mut agent = Agent::new(&self.client, self.model.clone(), self.auto_approve);
+        agent.session.messages = self.messages.clone();
+
+        match agent.run_task(prompt).await {
+            Ok(answer) => {
+                self.messages = agent.session.messages;
+                self.last_assistant_response = Some(answer);
+                self.session_stats.prompt_tokens += agent.session.stats.prompt_tokens;
+                self.session_stats.completion_tokens += agent.session.stats.completion_tokens;
+                self.session_stats.total_tokens += agent.session.stats.total_tokens;
+                self.session_stats.cache_hit_tokens += agent.session.stats.cache_hit_tokens;
+                self.session_stats.cache_miss_tokens += agent.session.stats.cache_miss_tokens;
+            }
+            Err(e) => {
+                eprintln!("\n{}: {}", "Agent error".red().bold(), e);
+            }
+        }
+    }
+
+    async fn process_chat_turn(&mut self, prompt: &str) {
+        self.messages.push(AgentMessage::user(prompt));
 
         let spinner = create_spinner("Connecting to DeepSeek...");
         let mut renderer = StreamRenderer::new();
@@ -373,10 +473,10 @@ impl ReplSession {
         match result {
             Ok((_, content, stats)) => {
                 renderer.finish(Some(&stats));
+                println!("  {}", format_cost_line(&stats, &self.model));
                 self.last_assistant_response = Some(content.clone());
-                self.messages.push(Message::assistant(content));
+                self.messages.push(AgentMessage::assistant(content));
 
-                // Accumulate session stats
                 self.session_stats.prompt_tokens += stats.prompt_tokens;
                 self.session_stats.completion_tokens += stats.completion_tokens;
                 self.session_stats.total_tokens += stats.total_tokens;
@@ -386,7 +486,6 @@ impl ReplSession {
             Err(e) => {
                 renderer.finish(None);
                 eprintln!("\n{}: {}", "Error".red().bold(), e);
-                // Remove the last user message so they can re-try
                 self.messages.pop();
             }
         }

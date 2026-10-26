@@ -1,4 +1,8 @@
+pub mod compact;
+
 use crate::api::{AgentMessage, DeepSeekClient, GenerationStats};
+use crate::cost::{format_cost_line, print_detailed_cost};
+use crate::session::{save_session, SessionData};
 use crate::tools::{execute_tool, get_tool_definitions};
 use crate::ui::print_stats_bar;
 use anyhow::{Context, Result};
@@ -14,11 +18,13 @@ pub struct Agent<'a> {
     max_turns: usize,
     depth: usize,
     role: String,
+    pub session: SessionData,
     cumulative_stats: GenerationStats,
 }
 
 impl<'a> Agent<'a> {
     pub fn new(client: &'a DeepSeekClient, model: String, auto_approve: bool) -> Self {
+        let session = SessionData::new(model.clone(), Vec::new());
         Self {
             client,
             model,
@@ -26,7 +32,27 @@ impl<'a> Agent<'a> {
             max_turns: 30,
             depth: 0,
             role: "Primary Agent".to_string(),
+            session,
             cumulative_stats: GenerationStats::default(),
+        }
+    }
+
+    pub fn from_session(
+        client: &'a DeepSeekClient,
+        session: SessionData,
+        auto_approve: bool,
+    ) -> Self {
+        let model = session.model.clone();
+        let stats = session.stats.clone();
+        Self {
+            client,
+            model,
+            auto_approve,
+            max_turns: 30,
+            depth: 0,
+            role: "Primary Agent".to_string(),
+            session,
+            cumulative_stats: stats,
         }
     }
 
@@ -37,6 +63,7 @@ impl<'a> Agent<'a> {
         depth: usize,
         role: String,
     ) -> Self {
+        let session = SessionData::new(model.clone(), Vec::new());
         Self {
             client,
             model,
@@ -44,6 +71,7 @@ impl<'a> Agent<'a> {
             max_turns: 15,
             depth,
             role,
+            session,
             cumulative_stats: GenerationStats::default(),
         }
     }
@@ -68,8 +96,10 @@ impl<'a> Agent<'a> {
     pub async fn run_task(&mut self, task: &str) -> Result<String> {
         let indent = "  ".repeat(self.depth);
 
-        let mut system_prompt = format!(
-            "You are DeepSeek Code ({}), an expert autonomous coding assistant and pair programmer.\n\
+        // If starting fresh session, add system prompt
+        if self.session.messages.is_empty() {
+            let mut system_prompt = format!(
+                "You are DeepSeek Code ({}), an expert autonomous coding assistant and pair programmer.\n\
 You have tools to read, edit, and write files, run shell commands, search the codebase, and delegate to subagents.\n\n\
 GUIDELINES:\n\
 1. Read before writing: use read_file or grep to inspect code before modifying it.\n\
@@ -78,25 +108,25 @@ GUIDELINES:\n\
 4. Explain concisely what you are doing before calling tools.\n\
 5. If a subtask is complex or requires broad codebase scanning, delegate to a focused subagent with spawn_subagent.\n\
 6. When the user's task is fully resolved, conclude with a brief wrap-up summary.",
-            self.role
-        );
+                self.role
+            );
 
-        if self.depth == 0 {
-            if let Some(mem) = Self::load_project_memory() {
-                system_prompt.push_str(&mem);
+            if self.depth == 0 {
+                if let Some(mem) = Self::load_project_memory() {
+                    system_prompt.push_str(&mem);
+                }
             }
+
+            self.session.messages.push(AgentMessage::system(system_prompt));
         }
 
-        let mut messages = vec![
-            AgentMessage::system(system_prompt),
-            AgentMessage::user(task),
-        ];
+        self.session.messages.push(AgentMessage::user(task));
 
         let allow_subagents = self.depth < 2;
         let tools = get_tool_definitions(allow_subagents);
 
         if self.depth == 0 {
-            println!("\n{} Starting autonomous task: {}", "⚡".yellow().bold(), task.bold());
+            println!("\n{} Starting task: {}", "⚡".yellow().bold(), task.bold());
             if self.auto_approve {
                 println!("{} Auto-approval enabled (--auto)", "🛡️".green());
             } else {
@@ -108,12 +138,25 @@ GUIDELINES:\n\
         let mut final_answer = String::new();
 
         for turn in 1..=self.max_turns {
+            // Auto-compact if message text exceeds 45,000 chars
+            let total_chars: usize = self
+                .session
+                .messages
+                .iter()
+                .filter_map(|m| m.content.as_ref())
+                .map(|c| c.len())
+                .sum();
+
+            if total_chars > 45000 {
+                let _ = compact::compact_history(self.client, &self.model, &mut self.session.messages).await;
+            }
+
             print!("{}{} Turn {}/{} ... ", indent, "❯".bright_blue().bold(), turn, self.max_turns);
             let _ = stdout().flush();
 
             let (response_msg, stats) = self
                 .client
-                .chat_with_tools(&self.model, &messages, Some(tools.clone()), Some(0.2))
+                .chat_with_tools(&self.model, &self.session.messages, Some(tools.clone()), Some(0.2))
                 .await
                 .context("Failed during agent communication turn")?;
 
@@ -122,6 +165,9 @@ GUIDELINES:\n\
             self.cumulative_stats.total_tokens += stats.total_tokens;
             self.cumulative_stats.cache_hit_tokens += stats.cache_hit_tokens;
             self.cumulative_stats.cache_miss_tokens += stats.cache_miss_tokens;
+
+            self.session.stats = self.cumulative_stats.clone();
+            let _ = save_session(&self.session);
 
             println!("{}", "done".dimmed());
 
@@ -136,16 +182,16 @@ GUIDELINES:\n\
             // Check if model called any tools
             if let Some(ref tool_calls) = response_msg.tool_calls {
                 if tool_calls.is_empty() {
-                    // No tool calls, agent has finished
                     if self.depth == 0 {
                         println!("\n{} Task completed successfully!", "✓".green().bold());
                         print_stats_bar(&self.cumulative_stats);
+                        println!("  {}", format_cost_line(&self.cumulative_stats, &self.model));
                     }
                     return Ok(final_answer);
                 }
 
                 // Append assistant's turn with tool_calls to conversation history
-                messages.push(response_msg.clone());
+                self.session.messages.push(response_msg.clone());
 
                 for call in tool_calls {
                     let fn_name = &call.function.name;
@@ -195,14 +241,14 @@ GUIDELINES:\n\
                             }
                         };
 
-                        // Accumulate subagent stats into parent stats
+                        // Accumulate subagent stats
                         self.cumulative_stats.prompt_tokens += subagent.cumulative_stats.prompt_tokens;
                         self.cumulative_stats.completion_tokens += subagent.cumulative_stats.completion_tokens;
                         self.cumulative_stats.total_tokens += subagent.cumulative_stats.total_tokens;
                         self.cumulative_stats.cache_hit_tokens += subagent.cumulative_stats.cache_hit_tokens;
                         self.cumulative_stats.cache_miss_tokens += subagent.cumulative_stats.cache_miss_tokens;
 
-                        messages.push(AgentMessage::tool_result(
+                        self.session.messages.push(AgentMessage::tool_result(
                             &call.id,
                             fn_name,
                             report,
@@ -232,17 +278,17 @@ GUIDELINES:\n\
                         "Action rejected by user.".to_string()
                     };
 
-                    messages.push(AgentMessage::tool_result(
+                    self.session.messages.push(AgentMessage::tool_result(
                         &call.id,
                         fn_name,
                         tool_result_content,
                     ));
                 }
             } else {
-                // No tool calls, task complete
                 if self.depth == 0 {
                     println!("\n{} Task completed!", "✓".green().bold());
                     print_stats_bar(&self.cumulative_stats);
+                    println!("  {}", format_cost_line(&self.cumulative_stats, &self.model));
                 }
                 return Ok(final_answer);
             }
@@ -255,8 +301,13 @@ GUIDELINES:\n\
                 self.max_turns
             );
             print_stats_bar(&self.cumulative_stats);
+            println!("  {}", format_cost_line(&self.cumulative_stats, &self.model));
         }
         Ok(final_answer)
+    }
+
+    pub fn print_cost_summary(&self) {
+        print_detailed_cost(&self.cumulative_stats, &self.model);
     }
 
     fn check_permission(&mut self, tool_name: &str, _args_json: &str, indent: &str) -> Result<bool> {
