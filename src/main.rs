@@ -4,6 +4,7 @@ mod files;
 mod git;
 mod repl;
 mod shell;
+pub mod tools;
 mod ui;
 
 use anyhow::{bail, Result};
