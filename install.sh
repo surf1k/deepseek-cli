@@ -86,9 +86,9 @@ if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
 fi
 
 echo ""
-echo -e "\033[1;36mGet started by setting your API key:\033[0m"
-echo "  export DEEPSEEK_API_KEY=\"sk-...\""
-echo "  deepseek"
+echo -e "\033[1;36mGet started with 100% Free Web Account or API Key:\033[0m"
+echo "  deepseek          # Free Web Account login or interactive mode"
+echo "  deepseek balance  # Check your account balance & status"
 echo ""
 echo "Or run autonomous coding agent:"
 echo "  deepseek agent \"find bugs in tests and run cargo test\""
