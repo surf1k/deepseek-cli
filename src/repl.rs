@@ -248,7 +248,7 @@ impl ReplSession {
                         .messages
                         .iter()
                         .find(|m| m.role == "system")
-                        .map(|m| m.content.as_str())
+                        .and_then(|m| m.content.as_deref())
                         .unwrap_or("None");
                     println!("Current system prompt: {}", current.dimmed());
                 } else {
@@ -263,7 +263,8 @@ impl ReplSession {
                 let mut out = String::new();
                 out.push_str(&format!("# DeepSeek Chat Session ({})\n\n", self.model));
                 for msg in &self.messages {
-                    out.push_str(&format!("### {}\n\n{}\n\n", msg.role.to_uppercase(), msg.content));
+                    let text = msg.content.as_deref().unwrap_or("");
+                    out.push_str(&format!("### {}\n\n{}\n\n", msg.role.to_uppercase(), text));
                 }
                 fs::write(filename, out)?;
                 println!("{} Saved session to {}", "✓".green(), filename.bold());
@@ -294,8 +295,10 @@ impl ReplSession {
                         if let Some(user_msg) = self.messages.last().cloned() {
                             if user_msg.role == "user" {
                                 self.messages.pop(); // Remove user to re-process
-                                println!("{} Retrying last prompt...", "↻".yellow());
-                                self.process_turn(&user_msg.content).await;
+                                if let Some(ref text) = user_msg.content {
+                                    println!("{} Retrying last prompt...", "↻".yellow());
+                                    self.process_turn(text).await;
+                                }
                             }
                         }
                     }

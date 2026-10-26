@@ -1,3 +1,4 @@
+pub mod agent;
 mod api;
 mod config;
 mod files;
@@ -63,6 +64,14 @@ struct Cli {
     #[arg(short = 'c', long)]
     copy: bool,
 
+    /// Run in autonomous agent mode (like Claude Code)
+    #[arg(short = 'a', long)]
+    agent: bool,
+
+    /// Auto-approve tool executions in agent mode
+    #[arg(short = 'y', long)]
+    auto: bool,
+
     /// Custom API base URL (default: https://api.deepseek.com)
     #[arg(long)]
     base_url: Option<String>,
@@ -95,6 +104,22 @@ enum Commands {
         /// What you want the terminal command to do
         #[arg(trailing_var_arg = true)]
         task: Vec<String>,
+    },
+
+    /// Run an autonomous coding agent with file editing, search, and shell execution (like Claude Code)
+    #[command(alias = "a")]
+    Agent {
+        /// Task for the agent to accomplish
+        #[arg(trailing_var_arg = true)]
+        task: Vec<String>,
+
+        /// Automatically approve tool actions without prompting
+        #[arg(short = 'y', long)]
+        auto: bool,
+
+        /// Override model to use for the agent (default: deepseek-chat)
+        #[arg(short, long)]
+        model: Option<String>,
     },
 
     /// Manage configuration, models, and API keys
@@ -162,11 +187,34 @@ async fn main() -> Result<()> {
                 }
                 return helper.run(&query).await;
             }
+            Commands::Agent { task, auto, model } => {
+                let api_key = require_api_key(&cfg)?;
+                let client = api::DeepSeekClient::new(cfg.base_url.clone(), api_key);
+                let selected_model = model.unwrap_or_else(|| "deepseek-chat".to_string());
+                let mut agent = agent::Agent::new(&client, selected_model, auto);
+                let query = task.join(" ");
+                if query.trim().is_empty() {
+                    bail!("Please provide a task for the agent, e.g. 'deepseek agent fix tests in src/main.rs'");
+                }
+                return agent.run_task(&query).await;
+            }
         }
     }
 
     // Resolve API key
     let api_key = require_api_key(&cfg)?;
+
+    // Check if --agent flag was passed with prompt
+    if cli.agent {
+        let client = api::DeepSeekClient::new(cfg.base_url.clone(), api_key);
+        let selected_model = cli.model.unwrap_or_else(|| "deepseek-chat".to_string());
+        let mut agent = agent::Agent::new(&client, selected_model, cli.auto);
+        let task = cli.prompt.join(" ");
+        if task.trim().is_empty() {
+            bail!("Please provide a task to run with --agent, e.g. 'deepseek -a add healthcheck endpoint'");
+        }
+        return agent.run_task(&task).await;
+    }
 
     // Check if stdin has piped data
     let mut stdin_content = String::new();

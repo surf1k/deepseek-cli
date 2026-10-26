@@ -2,7 +2,8 @@
 
 # ⚡ DeepSeek CLI (`deepseek`)
 
-**The ultimate terminal client, coding assistant, and Git workflow tool for DeepSeek-V3 & DeepSeek-R1 reasoning models, written in pure Rust.**
+**The open-source, blazing-fast autonomous coding agent & terminal assistant for DeepSeek-V3 & DeepSeek-R1 reasoning models, written in pure Rust.**
+*(Full Claude Code & OpenCode experience powered by DeepSeek API & local LLMs)*
 
 [![Rust](https://img.shields.io/badge/rust-1.80%2B-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
@@ -22,19 +23,20 @@
 
 ---
 
-## ✨ Features
+## ✨ Highlights
 
-- ⚡ **Blazing Fast (<10ms startup)**: Single static binary in pure async Rust (`tokio` + `reqwest` + `rustyline`), instant startup with zero runtime overhead.
-- 🧠 **DeepThink / R1 Reasoning Visualization**: Real-time streaming of DeepSeek-R1's inner thought process in a dedicated styled container, with elapsed timer and reasoning token counter.
-- 📊 **Real-time Performance & Cache Stats**: Displays generation speed (`tok/s`), total tokens, elapsed time, and DeepSeek **Context Cache hit percentage** after each completion.
-- 🛠️ **AI Git Commit Assistant (`deepseek commit`)**: Analyzes staged/unstaged git diffs, produces clean Conventional Commit messages, and allows one-key commit, edit, or regenerate.
-- 🔍 **AI Code Reviewer (`deepseek review`)**: Thoroughly inspects current git diffs for bugs, memory issues, security vulnerabilities, and code quality.
-- 🐚 **Natural Language Shell Assistant (`deepseek sh`)**: Converts natural language into executable shell commands for your OS/shell with a 1-click execution prompt.
-- 💬 **Interactive REPL with Tab Autocompletion**: Multi-turn conversation with slash command autocomplete (`/help`, `/model`, `/copy`, `/tokens`, `/save`, `/load`, `/retry`), multiline inputs (end with `\`), and persistent history.
-- 📋 **Seamless Clipboard Integration**: Auto-copy with `--copy` or `/copy` in REPL (native OS clipboard + OSC 52 fallback for SSH/tmux).
-- 📂 **Flexible File Attachments**: Attach files (`-f src/main.rs`), specific line ranges (`-f src/main.rs:10-50`), or glob patterns (`-f "src/**/*.rs"`).
-- 🔗 **Unix Pipelines**: Effortlessly pipe logs, diffs, and data (`git diff | deepseek "Explain this"`).
-- 🌐 **Provider Agnostic**: Works out of the box with official DeepSeek API, or local LLMs via Ollama, vLLM, and OpenRouter using `--base-url`.
+- 🤖 **Autonomous Coding Agent (`deepseek agent`)**: Replicates the **Claude Code / OpenCode** workflow. The agent autonomously plans, searches files (`glob`/`grep`), reads code (`read_file`), applies surgical edits (`edit_file`), and runs shell commands (`bash`) in an interactive loop until your task is done.
+- 🎨 **Visual Diff Engine**: Surgical file modifications previewed in color-coded unified diff format (`+` green / `-` red) before applying.
+- 🛡️ **Fine-Grained Permission System**: Read-only actions run safely; mutating actions (`edit_file`, `write_file`, `bash`) require approval (`[y] Yes | [n] No | [a] Always allow`), or use `--auto` (`-y`) for unattended background tasks.
+- 🧠 **Project Memory**: Automatically detects and ingests `DEEPSEEK.md`, `CLAUDE.md`, or `AGENTS.md` instructions from your workspace.
+- ⚡ **Blazing Fast (<10ms startup)**: Single static binary in pure async Rust (`tokio` + `reqwest`), no heavy Python or Node.js runtime required.
+- 💭 **DeepThink (R1 Reasoning) Visualizer**: Live streaming of DeepSeek-R1's inner thought process with elapsed timer and reasoning token counter.
+- 📊 **Real-time Performance & Cache Stats**: Displays tokens/second speed, total token counts, and DeepSeek **Context Cache hit percentage**.
+- 🛠️ **Built-in Developer Utilities**:
+  - `deepseek commit`: Automated Conventional Commits from staged/unstaged diffs.
+  - `deepseek review`: Security & quality code review of active changes.
+  - `deepseek sh`: Natural language terminal assistant with one-click command execution.
+- 💬 **Interactive REPL**: Multi-turn dialogue with Tab autocompletion (`/copy`, `/tokens`, `/model`, `/save`, `/load`, `/retry`), multiline input (`\`), and persistent history.
 
 ---
 
@@ -71,15 +73,38 @@ deepseek config set-key sk-your-deepseek-api-key
 ```bash
 deepseek config show              # Display current settings
 deepseek config set-model r1      # Set default model to DeepSeek-R1
-deepseek config set-url <URL>     # Set custom base URL (e.g. for Ollama)
-deepseek config path              # Print path to config.toml
+deepseek config set-url <URL>     # Set custom base URL (e.g. http://localhost:11434/v1 for Ollama)
 ```
 
 ---
 
-## 💡 Workflows & Examples
+## 🤖 Autonomous Agent Mode (Claude Code in Rust)
 
-### 1. Interactive REPL Mode
+Let DeepSeek work directly inside your codebase:
+
+```bash
+# Interactive agent mode
+deepseek agent "Fix the timeout panic in src/api.rs and run cargo test to verify"
+
+# Auto-approved unattended mode
+deepseek agent -y "Add healthcheck endpoint to server and update README.md"
+
+# Short syntax
+deepseek -a "Refactor database query logic in repository.rs"
+```
+
+### How the Agent Works:
+1. **Discovers**: Uses `grep` and `glob` to locate relevant files.
+2. **Inspects**: Uses `read_file` to view lines of code without blowing context.
+3. **Edits**: Uses `edit_file` to perform exact character replacements and shows a color diff.
+4. **Verifies**: Runs `bash` (e.g. `cargo test`, `npm test`) to verify the fix works.
+5. **Wraps up**: Explains what was changed.
+
+---
+
+## 💡 Developer Workflows
+
+### 1. Interactive REPL Chat
 ```bash
 deepseek
 ```
@@ -90,76 +115,31 @@ deepseek
   * `/save [path]` — Export chat session to Markdown.
   * `/load <path>` — Inject file content into chat context.
   * `/retry` — Regenerate the last response.
-  * `/temp <0.0-2.0>` — Adjust sampling temperature on the fly.
-  * `/clear` — Clear context while keeping system prompt.
   * `/exit` — Exit REPL.
 
----
-
 ### 2. AI Git Commit Generator
-Stage your files and let DeepSeek draft a conventional commit message:
+Stage your changes and generate a clean conventional commit:
 ```bash
 git add src/
 deepseek commit
 ```
-*Interactive Prompt*:
-```text
-Proposed Commit Message:
-──────────────────────────────────────────────
-feat(api): add context caching stats & token usage streaming
-──────────────────────────────────────────────
-Action? [c] Commit | [e] Edit | [r] Regenerate | [q] Cancel:
-```
-
----
 
 ### 3. AI Code Review
-Run a comprehensive code audit on your active changes before pushing:
 ```bash
 deepseek review
-# Or with DeepSeek-V3 for fast review:
+# Or fast review with V3:
 deepseek review -m v3
 ```
 
----
-
 ### 4. Natural Language Shell Helper
-Need a complex bash one-liner? Just describe what you want:
 ```bash
 deepseek sh "find all files larger than 100MB and sort them by size"
 ```
-```text
-╭─── Suggested Command ──────────────────────────────────
-│  find . -type f -size +100M -exec ls -lh {} + | sort -k 5 -hr
-╰── Searches for files >100MB and lists them in human-readable order.
 
-Action? [y] Execute | [c] Copy to clipboard | [n] Cancel: 
-```
-
----
-
-### 5. File & Line-Range Context
+### 5. Attach Files & Line Ranges
 ```bash
-# Attach specific line numbers
 deepseek -f src/api.rs:40-95 "Review this stream handling logic"
-
-# Attach all Rust files using glob
 deepseek -f "src/**/*.rs" "Suggest architectural improvements"
-```
-
----
-
-### 6. Unix Pipelines
-```bash
-cat /var/log/nginx/error.log | deepseek "Analyze root cause of these 502 errors"
-git diff main | deepseek "Generate a Markdown release summary"
-```
-
----
-
-### 7. Reasoning with DeepSeek-R1 (DeepThink)
-```bash
-deepseek -m r1 "How many r's are in strawberry? Prove step by step."
 ```
 
 ---
@@ -170,6 +150,7 @@ deepseek -m r1 "How many r's are in strawberry? Prove step by step."
 Usage: deepseek [OPTIONS] [PROMPT]... [COMMAND]
 
 Commands:
+  agent   Run an autonomous coding agent with file editing, search, and shell execution (alias: a)
   commit  Generate a Conventional Commit message from current git diff (alias: c)
   review  Perform a deep code review of staged/unstaged git changes (alias: r)
   sh      Generate and optionally execute a shell command from natural language (alias: run)
@@ -180,6 +161,8 @@ Arguments:
   [PROMPT]...  Prompt / question (leave empty for REPL mode)
 
 Options:
+  -a, --agent                      Run in autonomous agent mode (like Claude Code)
+  -y, --auto                       Auto-approve tool executions in agent mode
   -m, --model <MODEL>              Model: 'v3' (deepseek-chat) or 'r1' (deepseek-reasoner)
   -s, --system <SYSTEM>            Custom system prompt
   -f, --file <SPEC>                Attach file, range, or glob (-f src/main.rs:10-50 -f "src/**/*.rs")
