@@ -196,7 +196,8 @@ async fn main() -> Result<()> {
                 if query.trim().is_empty() {
                     bail!("Please provide a task for the agent, e.g. 'deepseek agent fix tests in src/main.rs'");
                 }
-                return agent.run_task(&query).await;
+                agent.run_task(&query).await?;
+                return Ok(());
             }
         }
     }
@@ -213,7 +214,8 @@ async fn main() -> Result<()> {
         if task.trim().is_empty() {
             bail!("Please provide a task to run with --agent, e.g. 'deepseek -a add healthcheck endpoint'");
         }
-        return agent.run_task(&task).await;
+        agent.run_task(&task).await?;
+        return Ok(());
     }
 
     // Check if stdin has piped data

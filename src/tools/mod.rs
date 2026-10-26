@@ -28,8 +28,8 @@ pub struct ToolExecutionResult {
     pub summary: String,
 }
 
-pub fn get_tool_definitions() -> Vec<serde_json::Value> {
-    vec![
+pub fn get_tool_definitions(allow_subagents: bool) -> Vec<serde_json::Value> {
+    let mut tools = vec![
         json!({
             "type": "function",
             "function": {
@@ -164,7 +164,33 @@ pub fn get_tool_definitions() -> Vec<serde_json::Value> {
                 }
             }
         }),
-    ]
+    ];
+
+    if allow_subagents {
+        tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": "spawn_subagent",
+                "description": "Spawn an autonomous subagent to investigate or solve a subtask in an isolated context (e.g. codebase exploration, testing, deep analysis). Returns the subagent's final report.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task": {
+                            "type": "string",
+                            "description": "Clear, specific, and actionable task description for the subagent"
+                        },
+                        "role": {
+                            "type": "string",
+                            "description": "Short role title, e.g. 'Codebase Researcher', 'Test Runner', 'Security Auditor'"
+                        }
+                    },
+                    "required": ["task"]
+                }
+            }
+        }));
+    }
+
+    tools
 }
 
 pub fn execute_tool(name: &str, args_json: &str) -> Result<ToolExecutionResult> {
