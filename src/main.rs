@@ -26,17 +26,17 @@ use std::io::{self, IsTerminal, Read};
     name = "deepseek",
     author = "surf1k",
     version = "0.1.0",
-    about = "⚡ Blazing-fast CLI for DeepSeek V3 & R1 reasoning models written in pure Rust",
+    about = "⚡ Blazing-fast CLI for DeepSeek V4.1, V4-Pro, V3 & R1 reasoning models written in pure Rust",
     long_about = "A sleek, feature-rich command-line client for DeepSeek AI.\n\
-Supports real-time streaming, DeepThink (R1 reasoning) visualization, interactive REPL, \
-Git commit & review assistant, natural language shell execution, file attachments, and Unix piping."
+Supports real-time streaming, DeepSeek-V4.1-Flash (1M context), DeepSeek-V4-Pro, DeepThink (R1) reasoning, \
+interactive REPL, autonomous coding agent, Git commit & review, natural language shell, and Unix piping."
 )]
 struct Cli {
     /// Prompt / question to ask DeepSeek (leave empty for interactive REPL)
     #[arg(trailing_var_arg = true)]
     prompt: Vec<String>,
 
-    /// Model to use: 'v3' (deepseek-chat) or 'r1' (deepseek-reasoner)
+    /// Model to use: 'v4.1' (deepseek-flash), 'v4-pro' (deepseek-v4-pro), 'v3', or 'r1'
     #[arg(short, long)]
     model: Option<String>,
 

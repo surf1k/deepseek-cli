@@ -62,39 +62,59 @@ fn prompt_model_selection() -> String {
         "╭── Step 2: Select Default Model ──────────────────────────────────────╮".cyan().bold()
     );
     println!(
-        "│ {} {}                                  │",
+        "│ {} {}                  │",
         "[1]".yellow().bold(),
-        "DeepSeek-V3  (deepseek-chat) - Recommended".bold()
+        "DeepSeek-V4.1-Flash  (deepseek-flash) - NEW! Recommended".green().bold()
     );
-    println!("│     • Ultra-fast inference, top coding & architecture benchmarks    │");
-    println!("│     • Optimal for daily REPL chat, agents, and git workflows         │");
+    println!("│     • Next-gen MoE: 1M context, ultra-fast coding & multimodal vision │");
     println!("│                                                                      │");
     println!(
         "│ {} {}                                  │",
         "[2]".yellow().bold(),
-        "DeepSeek-R1  (deepseek-reasoner)          ".bold()
+        "DeepSeek-V4-Pro      (deepseek-v4-pro)    - NEW! Flagship   ".bold()
     );
-    println!("│     • DeepThink reasoning model (shows internal thought tokens)      │");
-    println!("│     • Excels at complex math, algorithms, and deep logic analysis    │");
+    println!("│     • 1.6T MoE powerhouse, frontier reasoning, math & architecture   │");
+    println!("│                                                                      │");
+    println!(
+        "│ {} {}                                  │",
+        "[3]".yellow().bold(),
+        "DeepSeek-V3          (deepseek-chat)      - Classic 64K     ".bold()
+    );
+    println!("│     • Proven ultra-fast daily coding assistant                       │");
+    println!("│                                                                      │");
+    println!(
+        "│ {} {}                                  │",
+        "[4]".yellow().bold(),
+        "DeepSeek-R1          (deepseek-reasoner)  - DeepThink CoT   ".bold()
+    );
+    println!("│     • Step-by-step thinking tokens for complex logic & math          │");
     println!(
         "{}",
         "╰──────────────────────────────────────────────────────────────────────╯".cyan().bold()
     );
 
-    print!("\n{} ", "❯ Select default model [1 or 2, default: 1]:".bold());
+    print!("\n{} ", "❯ Select default model [1-4, default: 1]:".bold());
     let _ = stdout().flush();
 
     let mut choice = String::new();
     let _ = stdin().read_line(&mut choice);
 
     match choice.trim() {
-        "2" | "r1" | "reasoner" => {
+        "2" | "v4" | "pro" | "v4-pro" => {
+            println!("  Selected: {}", "DeepSeek-V4-Pro (deepseek-v4-pro)".green().bold());
+            "deepseek-v4-pro".to_string()
+        }
+        "3" | "v3" | "chat" => {
+            println!("  Selected: {}", "DeepSeek-V3 (deepseek-chat)".green().bold());
+            "deepseek-chat".to_string()
+        }
+        "4" | "r1" | "reasoner" => {
             println!("  Selected: {}", "DeepSeek-R1 (deepseek-reasoner)".green().bold());
             "deepseek-reasoner".to_string()
         }
         _ => {
-            println!("  Selected: {}", "DeepSeek-V3 (deepseek-chat)".green().bold());
-            "deepseek-chat".to_string()
+            println!("  Selected: {}", "DeepSeek-V4.1-Flash (deepseek-flash)".green().bold());
+            "deepseek-flash".to_string()
         }
     }
 }

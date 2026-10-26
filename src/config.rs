@@ -31,7 +31,7 @@ fn default_base_url() -> String {
 }
 
 fn default_model() -> String {
-    "deepseek-chat".to_string()
+    "deepseek-flash".to_string()
 }
 
 fn default_temperature() -> f32 {
@@ -115,6 +115,11 @@ impl Config {
 
     pub fn canonicalize_model(input: &str) -> String {
         match input.to_lowercase().as_str() {
+            "v4.1" | "4.1" | "v4.1-flash" | "deepseek-v4.1" | "deepseek-v4.1-flash" | "flash"
+            | "deepseek-flash" => "deepseek-flash".to_string(),
+            "v4" | "4" | "v4-pro" | "pro" | "deepseek-v4" | "deepseek-v4-pro" => {
+                "deepseek-v4-pro".to_string()
+            }
             "v3" | "chat" | "deepseek-v3" | "deepseek-chat" => "deepseek-chat".to_string(),
             "r1" | "reasoner" | "deepseek-r1" | "deepseek-reasoner" | "think" => {
                 "deepseek-reasoner".to_string()

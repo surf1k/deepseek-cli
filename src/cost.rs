@@ -8,14 +8,25 @@ pub struct CostBreakdown {
 }
 
 pub fn calculate_cost(stats: &GenerationStats, model: &str) -> CostBreakdown {
-    let is_r1 = model.contains("reasoner") || model.contains("r1");
+    let lower = model.to_lowercase();
+    let is_r1 = lower.contains("reasoner") || lower.contains("r1");
+    let is_flash = lower.contains("flash") || lower.contains("v4.1");
+    let is_pro = lower.contains("v4-pro") || lower.contains("pro");
 
     // DeepSeek pricing per token (USD)
-    // V3: Cache Hit: $0.14/M, Cache Miss: $0.28/M, Output: $2.19/M
-    // R1: Cache Hit: $0.14/M, Cache Miss: $0.55/M, Output: $2.19/M
-    let cache_hit_rate = 0.14 / 1_000_000.0;
-    let cache_miss_rate = if is_r1 { 0.55 / 1_000_000.0 } else { 0.28 / 1_000_000.0 };
-    let output_rate = 2.19 / 1_000_000.0;
+    // V4.1 Flash: Cache Hit: $0.07/M, Cache Miss: $0.14/M, Output: $0.55/M
+    // V4 Pro:     Cache Hit: $0.20/M, Cache Miss: $0.60/M, Output: $2.50/M
+    // V3:         Cache Hit: $0.14/M, Cache Miss: $0.28/M, Output: $2.19/M
+    // R1:         Cache Hit: $0.14/M, Cache Miss: $0.55/M, Output: $2.19/M
+    let (cache_hit_rate, cache_miss_rate, output_rate) = if is_flash {
+        (0.07 / 1_000_000.0, 0.14 / 1_000_000.0, 0.55 / 1_000_000.0)
+    } else if is_pro {
+        (0.20 / 1_000_000.0, 0.60 / 1_000_000.0, 2.50 / 1_000_000.0)
+    } else if is_r1 {
+        (0.14 / 1_000_000.0, 0.55 / 1_000_000.0, 2.19 / 1_000_000.0)
+    } else {
+        (0.14 / 1_000_000.0, 0.28 / 1_000_000.0, 2.19 / 1_000_000.0)
+    };
 
     let hit_tokens = stats.cache_hit_tokens as f64;
     let miss_tokens = if stats.cache_miss_tokens > 0 {

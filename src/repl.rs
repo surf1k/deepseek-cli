@@ -151,10 +151,14 @@ impl ReplSession {
 
         loop {
             let prompt = if multiline_buffer.is_empty() {
-                let badge = if self.model.contains("reasoner") {
-                    "R1".cyan()
+                let badge = if self.model.contains("flash") || self.model.contains("v4.1") {
+                    "V4.1".bright_cyan().bold()
+                } else if self.model.contains("pro") || self.model.contains("v4") {
+                    "V4-Pro".magenta().bold()
+                } else if self.model.contains("reasoner") || self.model.contains("r1") {
+                    "R1".cyan().bold()
                 } else {
-                    "V3".green()
+                    "V3".green().bold()
                 };
                 format!("{} ❯ ", badge)
             } else {
@@ -454,34 +458,58 @@ impl ReplSession {
 
     async fn interactive_model_select(&mut self) {
         println!("\n{}", "Select Active Model:".bold().cyan());
-        let v3_active = self.model.contains("chat");
-        let r1_active = self.model.contains("reasoner");
+        let flash_active = self.model.contains("flash") || self.model.contains("v4.1");
+        let pro_active = self.model.contains("pro") || self.model.contains("v4-pro");
+        let v3_active = self.model == "deepseek-chat" || self.model.contains("v3");
+        let r1_active = self.model.contains("reasoner") || self.model.contains("r1");
 
         println!(
-            "  {} DeepSeek-V3  {} - Blazing fast, top coding skills{}",
+            "  {} DeepSeek-V4.1-Flash {} - 1M context, blazing speed & vision{}",
             "[1]".yellow().bold(),
+            "(deepseek-flash)".bold(),
+            if flash_active { " [active]".green().bold() } else { "".normal() }
+        );
+        println!(
+            "  {} DeepSeek-V4-Pro     {} - 1.6T MoE flagship, frontier coding{}",
+            "[2]".yellow().bold(),
+            "(deepseek-v4-pro)".bold(),
+            if pro_active { " [active]".green().bold() } else { "".normal() }
+        );
+        println!(
+            "  {} DeepSeek-V3         {} - Classic 64k fast coding{}",
+            "[3]".yellow().bold(),
             "(deepseek-chat)".bold(),
             if v3_active { " [active]".green().bold() } else { "".normal() }
         );
         println!(
-            "  {} DeepSeek-R1  {} - DeepThink reasoning, complex math & logic{}",
-            "[2]".yellow().bold(),
+            "  {} DeepSeek-R1         {} - DeepThink reasoning, complex logic{}",
+            "[4]".yellow().bold(),
             "(deepseek-reasoner)".bold(),
             if r1_active { " [active]".green().bold() } else { "".normal() }
         );
-        print!("\n{} ", "Select [1 or 2, Enter to keep current]:".bold());
+        print!("\n{} ", "Select [1-4, Enter to keep current]:".bold());
         let _ = stdout().flush();
 
         let mut choice = String::new();
         let _ = stdin().read_line(&mut choice);
 
         match choice.trim() {
-            "1" | "v3" | "chat" => {
+            "1" | "v4.1" | "flash" => {
+                self.model = "deepseek-flash".to_string();
+                self.session_data.model = self.model.clone();
+                println!("Switched to {}", self.model.bold().green());
+            }
+            "2" | "v4" | "pro" | "v4-pro" => {
+                self.model = "deepseek-v4-pro".to_string();
+                self.session_data.model = self.model.clone();
+                println!("Switched to {}", self.model.bold().green());
+            }
+            "3" | "v3" | "chat" => {
                 self.model = "deepseek-chat".to_string();
                 self.session_data.model = self.model.clone();
                 println!("Switched to {}", self.model.bold().green());
             }
-            "2" | "r1" | "reasoner" => {
+            "4" | "r1" | "reasoner" => {
                 self.model = "deepseek-reasoner".to_string();
                 self.session_data.model = self.model.clone();
                 println!("Switched to {}", self.model.bold().cyan());
