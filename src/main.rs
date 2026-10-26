@@ -6,11 +6,13 @@ pub mod cost;
 mod files;
 mod git;
 mod onboarding;
+pub mod pow;
 mod repl;
 pub mod session;
 mod shell;
 pub mod tools;
 mod ui;
+pub mod web_client;
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
@@ -249,8 +251,28 @@ async fn main() -> Result<()> {
                 return auth::run_login_command(&mut cfg).await;
             }
             Commands::Balance => {
-                let api_key = require_api_key(&mut cfg).await?;
-                let client = api::DeepSeekClient::new(cfg.base_url.clone(), api_key);
+                let (auth_token, is_web) = require_auth(&mut cfg).await?;
+                if is_web {
+                    let spinner = ui::create_spinner("Checking DeepSeek Web Account...");
+                    let web = web_client::WebClient::new(auth_token);
+                    let user_res = web.get_current_user().await;
+                    spinner.finish_and_clear();
+
+                    match user_res {
+                        Ok(u) => {
+                            println!("{}", "DeepSeek Account Status:".bold().cyan());
+                            println!("  Mode:            {}", "Free Web Account (chat.deepseek.com)".green().bold());
+                            println!("  Status:          {}", "Active (Unlimited Free Web)".green().bold());
+                            println!("  User:            {}", u.name.or(u.email).unwrap_or(u.id).bold());
+                            println!("  Cost:            {}", "$0.00 (Free / No balance or API key needed)".bold().green());
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            bail!("Failed to verify Web Account session: {}. Run 'deepseek login' to refresh.", e);
+                        }
+                    }
+                }
+                let client = api::DeepSeekClient::new(cfg.base_url.clone(), auth_token);
                 let balance = client.get_account_balance().await?;
                 println!("{}", "DeepSeek Account Status & Balance:".bold().cyan());
                 println!(
@@ -282,12 +304,18 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Resolve API key
-    let api_key = require_api_key(&mut cfg).await?;
+    // Resolve credentials (Web Token or API Key)
+    let (auth_token, is_web) = require_auth(&mut cfg).await?;
 
     // Check if --agent flag was passed with prompt
     if cli.agent {
-        let client = api::DeepSeekClient::new(cfg.base_url.clone(), api_key);
+        if is_web {
+            bail!(
+                "Autonomous Agent mode with tool execution requires a Developer API key or OpenRouter.\n\
+                 Run 'deepseek login' and select [2] Developer API Key or [3] Free OpenRouter."
+            );
+        }
+        let client = api::DeepSeekClient::new(cfg.base_url.clone(), auth_token.clone());
         let selected_model = cli.model.unwrap_or_else(|| "deepseek-chat".to_string());
         let mut agent = if cli.continue_session {
             match session::load_latest_session() {
@@ -338,12 +366,42 @@ async fn main() -> Result<()> {
     }
 
     // Otherwise, execute one-shot mode
-    run_one_shot(cli, cfg, api_key, stdin_content).await
+    run_one_shot(cli, cfg, auth_token, stdin_content).await
+}
+
+async fn require_auth(cfg: &mut Config) -> Result<(String, bool)> {
+    if let Some(auth) = cfg.resolve_auth() {
+        return Ok(auth);
+    }
+
+    if io::stdin().is_terminal() {
+        let key = onboarding::run_onboarding(cfg).await?;
+        return Ok((key, cfg.is_web_mode()));
+    }
+
+    eprintln!("{}", "Error: No DeepSeek credentials or API key found.".red().bold());
+    eprintln!(
+        "Run {} to log into your free web account or set your key.",
+        "deepseek login".yellow()
+    );
+    eprintln!(
+        "Or set API key via: {}",
+        "export DEEPSEEK_API_KEY=sk-...".cyan()
+    );
+    std::process::exit(1);
 }
 
 async fn require_api_key(cfg: &mut Config) -> Result<String> {
     if let Some(k) = cfg.resolve_api_key() {
         return Ok(k);
+    }
+
+    if cfg.is_web_mode() {
+        bail!(
+            "This command requires a DeepSeek Developer API Key or OpenRouter key.\n\
+             You are currently in Free Web Account mode (chat.deepseek.com).\n\
+             Run 'deepseek login' and select [2] Developer API Key or [3] Free OpenRouter."
+        );
     }
 
     if io::stdin().is_terminal() {
@@ -363,6 +421,7 @@ fn handle_config_action(action: ConfigAction, mut cfg: Config) -> Result<()> {
     match action {
         ConfigAction::SetKey { key } => {
             cfg.api_key = Some(key.trim().to_string());
+            cfg.auth_mode = "api".to_string();
             cfg.save()?;
             println!("{} API key saved successfully.", "✓".green());
         }
@@ -380,16 +439,26 @@ fn handle_config_action(action: ConfigAction, mut cfg: Config) -> Result<()> {
         ConfigAction::Show => {
             println!("{}", "Current DeepSeek CLI Configuration:".bold());
             println!("  Config path:   {}", Config::config_path()?.display().to_string().cyan());
+            println!("  Auth Mode:     {}", if cfg.is_web_mode() { "Free Web Account (chat.deepseek.com) [100% FREE]".green().bold() } else { "Developer API Key".cyan().bold() });
             println!("  Base URL:      {}", cfg.base_url);
             println!("  Default model: {}", cfg.default_model);
             println!("  Temperature:   {}", cfg.temperature);
             println!("  Auto-compact:  {} (threshold: {} chars)", if cfg.auto_compact { "enabled".green() } else { "disabled".yellow() }, cfg.compact_threshold_chars);
-            let masked_key = match cfg.resolve_api_key() {
-                Some(k) if k.len() > 8 => format!("{}...{}", &k[..4], &k[k.len() - 4..]),
-                Some(_) => "******".to_string(),
-                None => "None (not set)".red().to_string(),
-            };
-            println!("  API Key:       {}", masked_key);
+            if cfg.is_web_mode() {
+                let masked_token = match cfg.user_token.as_ref() {
+                    Some(t) if t.len() > 12 => format!("{}...{}", &t[..6], &t[t.len() - 4..]),
+                    Some(_) => "******".to_string(),
+                    None => "None (not logged in)".red().to_string(),
+                };
+                println!("  Web Token:     {}", masked_token);
+            } else {
+                let masked_key = match cfg.resolve_api_key() {
+                    Some(k) if k.len() > 8 => format!("{}...{}", &k[..4], &k[k.len() - 4..]),
+                    Some(_) => "******".to_string(),
+                    None => "None (not set)".red().to_string(),
+                };
+                println!("  API Key:       {}", masked_key);
+            }
         }
         ConfigAction::Path => {
             println!("{}", Config::config_path()?.display());
@@ -401,10 +470,9 @@ fn handle_config_action(action: ConfigAction, mut cfg: Config) -> Result<()> {
 async fn run_one_shot(
     cli: Cli,
     cfg: Config,
-    api_key: String,
+    auth_token: String,
     stdin_content: String,
 ) -> Result<()> {
-    let client = api::DeepSeekClient::new(cfg.base_url, api_key);
     let selected_model = cli
         .model
         .unwrap_or_else(|| cfg.default_model.clone());
@@ -416,7 +484,7 @@ async fn run_one_shot(
     // 1. System prompt
     let system_prompt = cli
         .system
-        .or(cfg.system_prompt)
+        .or(cfg.system_prompt.clone())
         .unwrap_or_else(|| "You are DeepSeek, a helpful, precise, and thoughtful AI assistant.".to_string());
     messages.push(api::Message::system(system_prompt));
 
@@ -450,6 +518,96 @@ async fn run_one_shot(
     }
     full_user_content.push_str(&user_text);
 
+    // Handle Free Web Account mode
+    if cfg.is_web_mode() {
+        let web = web_client::WebClient::new(auth_token);
+        let raw = cli.raw || !io::stdout().is_terminal();
+        let mut renderer = ui::StreamRenderer::new();
+        let mut spinner = if !raw {
+            Some(ui::create_spinner("Solving DeepSeek PoW & streaming..."))
+        } else {
+            None
+        };
+
+        let session_id = web.create_chat_session().await?;
+        let thinking_enabled = model.contains("reasoner") || model.contains("r1") || model.contains("flash");
+
+        let mut first_token = true;
+        let mut accumulated_answer = String::new();
+
+        let res = web
+            .stream_chat(
+                &session_id,
+                &full_user_content,
+                thinking_enabled,
+                |chunk| {
+                    if first_token {
+                        first_token = false;
+                        if let Some(sp) = spinner.take() {
+                            sp.finish_and_clear();
+                        }
+                    }
+
+                    if raw {
+                        if let api::StreamChunk::Content(text) = chunk {
+                            accumulated_answer.push_str(&text);
+                            print!("{}", text);
+                            let _ = io::Write::flush(&mut io::stdout());
+                        }
+                    } else {
+                        match chunk {
+                            api::StreamChunk::Reasoning(text) => renderer.on_reasoning_chunk(&text),
+                            api::StreamChunk::Content(text) => {
+                                accumulated_answer.push_str(&text);
+                                renderer.on_content_chunk(&text);
+                            }
+                            api::StreamChunk::Usage(_) => {}
+                            api::StreamChunk::Done => {}
+                        }
+                    }
+                },
+            )
+            .await;
+
+        if let Some(sp) = spinner.take() {
+            sp.finish_and_clear();
+        }
+
+        match res {
+            Ok((_, _, stats)) => {
+                if !raw {
+                    let stats_ref = if !cli.no_stats && cfg.show_stats {
+                        Some(&stats)
+                    } else {
+                        None
+                    };
+                    renderer.finish(stats_ref);
+                    if !cli.no_stats && cfg.show_stats {
+                        println!("  {}", "[Free Web Account - $0.00]".green().bold());
+                    }
+                } else {
+                    println!();
+                }
+
+                if cli.copy && !accumulated_answer.is_empty() {
+                    ui::copy_to_clipboard(&accumulated_answer);
+                    if !raw {
+                        println!("{}", "  [✓ Copied to clipboard]".dimmed());
+                    }
+                }
+
+                return Ok(());
+            }
+            Err(e) => {
+                if !raw {
+                    renderer.finish(None);
+                }
+                bail!(e);
+            }
+        }
+    }
+
+    let client = api::DeepSeekClient::new(cfg.base_url, auth_token);
     messages.push(api::Message::user(full_user_content));
 
     // 4. Stream response

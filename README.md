@@ -56,14 +56,16 @@ cargo install --git https://github.com/surf1k/deepseek-cli
 
 ## ⚙️ Authentication & Configuration
 
-When you first launch `deepseek`, an interactive setup wizard guides you:
-- **Web Browser Authentication**: Opens the DeepSeek Platform in your browser to log in and copy your API key, automatically captured by a local loopback listener.
-- **Manual API Key**: Paste directly in the terminal (`sk-...`).
-- **Custom Endpoints**: Connect to local Ollama (`http://localhost:11434/v1`), vLLM, or OpenRouter.
+When you launch `deepseek`, an interactive setup wizard guides you:
+- 🌐 **Free Web Account (`chat.deepseek.com`) [100% FREE / NO API KEY]**: Connects directly to your regular free DeepSeek account with our built-in Keccak-f1600 Proof-of-Work (PoW) solver. Unlimited free queries with zero API cost!
+- 🔑 **Developer API Key (`platform.deepseek.com`)**: For full autonomous tool execution (`edit_file`, `bash`) via official paid pay-as-you-go balance.
+- ⚡ **Free OpenRouter (`deepseek/deepseek-r1:free`)**: Free API access via OpenRouter.
+- 💻 **Custom Endpoints**: Connect to local Ollama (`http://localhost:11434/v1`), vLLM, or custom proxies.
 
 ### Login anytime:
 ```bash
-deepseek login                    # Web browser or terminal auth
+deepseek login                    # Switch between Free Web Account, API Key, or OpenRouter
+deepseek balance                  # Check your live account balance or free web status
 ```
 
 Or set via environment variable:
@@ -79,7 +81,7 @@ deepseek config set-key sk-your-deepseek-api-key
 ### Useful Config Commands
 ```bash
 deepseek config show              # Display current settings and auto-compact status
-deepseek config set-model r1      # Set default model to DeepSeek-R1
+deepseek config set-model flash   # Set default model to DeepSeek-V4.1-Flash
 deepseek config set-url <URL>     # Set custom base URL (e.g. http://localhost:11434/v1 for Ollama)
 ```
 

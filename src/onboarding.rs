@@ -8,8 +8,13 @@ pub async fn run_onboarding(cfg: &mut Config) -> Result<String> {
     print_welcome_banner();
 
     // Step 1: Authentication (Web browser login, manual key, or custom endpoint)
-    let api_key = auth::prompt_authentication(cfg).await?;
-    cfg.api_key = Some(api_key.clone());
+    let token_or_key = auth::prompt_authentication(cfg).await?;
+    if cfg.is_web_mode() {
+        cfg.user_token = Some(token_or_key.clone());
+        cfg.api_key = None;
+    } else {
+        cfg.api_key = Some(token_or_key.clone());
+    }
 
     // Step 2: Default Model Selection
     let chosen_model = prompt_model_selection();
@@ -21,7 +26,7 @@ pub async fn run_onboarding(cfg: &mut Config) -> Result<String> {
     // Step 4: Setup Complete Box & Quick Tips
     print_completion_box(cfg, &chosen_model)?;
 
-    Ok(api_key)
+    Ok(token_or_key)
 }
 
 fn print_welcome_banner() {
@@ -129,6 +134,14 @@ fn print_completion_box(cfg: &Config, model: &str) -> Result<()> {
     println!(
         "│ Config saved:  {}",
         cfg_path.display().to_string().cyan()
+    );
+    println!(
+        "│ Mode:          {}",
+        if cfg.is_web_mode() {
+            "Free Web Account (chat.deepseek.com) [100% FREE]".green().bold()
+        } else {
+            "Developer API Key (platform.deepseek.com)".cyan().bold()
+        }
     );
     println!("│ Default Model: {}", model.bold().green());
     println!("│ Auto-compact:  {} (threshold: {} chars)", "enabled".green(), cfg.compact_threshold_chars);

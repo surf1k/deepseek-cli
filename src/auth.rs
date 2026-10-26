@@ -38,10 +38,28 @@ pub fn clean_key_input(raw: &str) -> String {
         .to_string()
 }
 
+pub fn clean_token_input(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(val) = v.get("value").and_then(|x| x.as_str()) {
+            return val.trim().to_string();
+        }
+        if let Some(s) = v.as_str() {
+            return s.trim().to_string();
+        }
+    }
+    clean_key_input(trimmed)
+}
+
 pub async fn run_login_command(cfg: &mut Config) -> Result<()> {
     println!("{}", "DeepSeek CLI Authentication".bold().cyan());
-    let key = prompt_authentication(cfg).await?;
-    cfg.api_key = Some(key);
+    let token_or_key = prompt_authentication(cfg).await?;
+    if cfg.is_web_mode() {
+        cfg.user_token = Some(token_or_key);
+        cfg.api_key = None;
+    } else {
+        cfg.api_key = Some(token_or_key);
+    }
     cfg.save()?;
     println!("{} Logged in and credentials saved successfully.", "✓".green().bold());
     Ok(())
@@ -50,27 +68,41 @@ pub async fn run_login_command(cfg: &mut Config) -> Result<()> {
 pub async fn prompt_authentication(cfg: &mut Config) -> Result<String> {
     println!(
         "{}",
-        "╭── Authentication Method ─────────────────────────────────────────────╮".cyan().bold()
+        "╭── Authentication Mode ───────────────────────────────────────────────╮".cyan().bold()
     );
     println!(
-        "│ {} {}                                │",
+        "│ {} {}  │",
         "[1]".yellow().bold(),
-        "Web Browser Login (Recommended)            ".bold()
+        "Free Web Account (chat.deepseek.com)  [NO API KEY / 100% FREE]".green().bold()
     );
-    println!("│     • Opens DeepSeek Platform to log in and copy your API key        │");
-    println!("│     • Local server captures key automatically via web page           │");
+    println!("│     • Work directly through your regular DeepSeek account without an API│");
+    println!("│     • Powered by DeepSeek-V4.1-Flash with DeepThink reasoning        │");
     println!("│                                                                      │");
     println!(
         "│ {} {}                                │",
         "[2]".yellow().bold(),
-        "Enter API Key directly                     ".bold()
+        "Developer API Key (Browser Login)          ".bold()
     );
-    println!("│     • Paste your key directly in the terminal (sk-...)               │");
+    println!("│     • Opens platform.deepseek.com with local authorization callback   │");
     println!("│                                                                      │");
     println!(
         "│ {} {}                                │",
         "[3]".yellow().bold(),
-        "Custom Endpoint (Ollama / OpenRouter / vLLM)".bold()
+        "Enter API Key directly in terminal (sk-...)".bold()
+    );
+    println!("│     • Paste your key directly in the console                         │");
+    println!("│                                                                      │");
+    println!(
+        "│ {} {}                                │",
+        "[4]".yellow().bold(),
+        "Free OpenRouter (deepseek/deepseek-r1:free)".bold()
+    );
+    println!("│     • Free API key from openrouter.ai                                │");
+    println!("│                                                                      │");
+    println!(
+        "│ {} {}                                │",
+        "[5]".yellow().bold(),
+        "Custom Endpoint (Ollama / Local / vLLM)    ".bold()
     );
     println!("│     • Specify a custom Base URL and local/remote model               │");
     println!(
@@ -78,17 +110,106 @@ pub async fn prompt_authentication(cfg: &mut Config) -> Result<String> {
         "╰──────────────────────────────────────────────────────────────────────╯".cyan().bold()
     );
 
-    print!("\n{} ", "❯ Select option [1/2/3, default: 1]:".bold());
+    print!("\n{} ", "❯ Select option [1-5, default: 1]:".bold());
     let _ = stdout().flush();
 
     let mut choice = String::new();
     let _ = stdin().read_line(&mut choice);
 
     match choice.trim() {
-        "2" => prompt_key_terminal(cfg).await,
-        "3" => prompt_custom_endpoint(cfg).await,
-        _ => prompt_web_browser_login(cfg).await,
+        "2" => prompt_web_browser_login(cfg).await,
+        "3" => prompt_key_terminal(cfg).await,
+        "4" => prompt_openrouter_free(cfg).await,
+        "5" => prompt_custom_endpoint(cfg).await,
+        _ => prompt_web_account(cfg).await,
     }
+}
+
+async fn prompt_web_account(cfg: &mut Config) -> Result<String> {
+    println!("\n{}", "Free DeepSeek Web Account (chat.deepseek.com):".bold().green());
+    println!("  {} No paid API key required! Uses your regular DeepSeek account.", "✓".green());
+    println!("  {} Opening chat.deepseek.com in your browser...", "🌐".cyan());
+
+    let _ = open_browser("https://chat.deepseek.com");
+
+    println!("\n{}", "How to authenticate your free account (takes 10 seconds):".bold());
+    println!("  1. Log into your account on {} in the opened browser", "chat.deepseek.com".cyan());
+    println!("  2. Press {} to open Developer Tools, click {} tab", "F12".yellow(), "Console".yellow());
+    println!("  3. Paste this command and hit Enter:\n");
+    println!("     {}", "copy(JSON.parse(localStorage.userToken).value)".green().bold());
+    println!("\n  (This copies your session token directly to your clipboard)");
+
+    loop {
+        print!("\n{} ", "❯ Paste your userToken here:".bold().yellow());
+        let _ = stdout().flush();
+
+        let mut input = String::new();
+        stdin().read_line(&mut input)?;
+        let token = clean_token_input(&input);
+
+        if token.is_empty() {
+            println!("  {} Token cannot be empty. Please try again.", "✗".red());
+            continue;
+        }
+
+        let spinner = create_spinner("Verifying your free DeepSeek Web session...");
+        let web_client = crate::web_client::WebClient::new(token.clone());
+        let user_info = web_client.get_current_user().await;
+        spinner.finish_and_clear();
+
+        match user_info {
+            Ok(info) => {
+                let user_disp = info.name.or(info.email).unwrap_or(info.id);
+                println!(
+                    "  {} Logged into DeepSeek Web Account: {}",
+                    "✓".green().bold(),
+                    user_disp.bold().green()
+                );
+                cfg.auth_mode = "web".to_string();
+                cfg.user_token = Some(token.clone());
+                cfg.api_key = None;
+                cfg.save()?;
+                return Ok(token);
+            }
+            Err(e) => {
+                println!(
+                    "  {} Failed to verify token: {}",
+                    "⚠".yellow().bold(),
+                    e
+                );
+                print!("  Use this token anyway? [y/N]: ");
+                let _ = stdout().flush();
+                let mut retry = String::new();
+                let _ = stdin().read_line(&mut retry);
+                if retry.trim().eq_ignore_ascii_case("y") {
+                    cfg.auth_mode = "web".to_string();
+                    cfg.user_token = Some(token.clone());
+                    cfg.api_key = None;
+                    cfg.save()?;
+                    return Ok(token);
+                }
+            }
+        }
+    }
+}
+
+async fn prompt_openrouter_free(cfg: &mut Config) -> Result<String> {
+    println!("\n{}", "OpenRouter Free DeepSeek Setup:".bold().cyan());
+    println!("  Get your free API key at: https://openrouter.ai/keys");
+    print!("❯ Enter OpenRouter API Key (sk-or-...): ");
+    let _ = stdout().flush();
+    let mut key_input = String::new();
+    stdin().read_line(&mut key_input)?;
+    let key = clean_key_input(&key_input);
+
+    cfg.base_url = "https://openrouter.ai/api/v1".to_string();
+    cfg.default_model = "deepseek/deepseek-r1:free".to_string();
+    cfg.auth_mode = "api".to_string();
+    cfg.api_key = Some(key.clone());
+    cfg.save()?;
+
+    println!("{} Configured free OpenRouter DeepSeek R1.", "✓".green());
+    Ok(key)
 }
 
 async fn prompt_web_browser_login(cfg: &Config) -> Result<String> {

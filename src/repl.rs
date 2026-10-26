@@ -69,6 +69,8 @@ impl Helper for CommandCompleter {}
 pub struct ReplSession {
     config: Config,
     client: DeepSeekClient,
+    web_client: Option<crate::web_client::WebClient>,
+    web_session_id: Option<String>,
     model: String,
     messages: Vec<AgentMessage>,
     last_assistant_response: Option<String>,
@@ -79,10 +81,16 @@ pub struct ReplSession {
 
 impl ReplSession {
     pub fn new(config: Config, model: Option<String>) -> Self {
-        let api_key = config
-            .resolve_api_key()
-            .expect("API key must be resolved before starting REPL");
-        let client = DeepSeekClient::new(config.base_url.clone(), api_key);
+        let (auth_token, is_web) = config
+            .resolve_auth()
+            .expect("Credentials must be resolved before starting REPL");
+        let (client, web_client) = if is_web {
+            let dummy = DeepSeekClient::new(config.base_url.clone(), "web-session-token".to_string());
+            let web = crate::web_client::WebClient::new(auth_token);
+            (dummy, Some(web))
+        } else {
+            (DeepSeekClient::new(config.base_url.clone(), auth_token), None)
+        };
         let selected_model = model.unwrap_or_else(|| config.default_model.clone());
         let canonical_model = Config::canonicalize_model(&selected_model);
 
@@ -96,6 +104,8 @@ impl ReplSession {
         Self {
             config,
             client,
+            web_client,
+            web_session_id: None,
             model: canonical_model,
             messages,
             last_assistant_response: None,
@@ -106,10 +116,16 @@ impl ReplSession {
     }
 
     pub fn from_session(config: Config, session: SessionData) -> Self {
-        let api_key = config
-            .resolve_api_key()
-            .expect("API key must be resolved before starting REPL");
-        let client = DeepSeekClient::new(config.base_url.clone(), api_key);
+        let (auth_token, is_web) = config
+            .resolve_auth()
+            .expect("Credentials must be resolved before starting REPL");
+        let (client, web_client) = if is_web {
+            let dummy = DeepSeekClient::new(config.base_url.clone(), "web-session-token".to_string());
+            let web = crate::web_client::WebClient::new(auth_token);
+            (dummy, Some(web))
+        } else {
+            (DeepSeekClient::new(config.base_url.clone(), auth_token), None)
+        };
         let model = session.model.clone();
         let messages = session.messages.clone();
         let stats = session.stats.clone();
@@ -117,6 +133,8 @@ impl ReplSession {
         Self {
             config,
             client,
+            web_client,
+            web_session_id: None,
             model,
             messages,
             last_assistant_response: None,
@@ -138,14 +156,29 @@ impl ReplSession {
             let _ = rl.load_history(path);
         }
 
-        let is_r1 = self.model.contains("reasoner");
-        let model_badge = if is_r1 {
+        let mode_badge = if self.web_client.is_some() {
+            format!("[Free Web Account 🌐]").green().bold()
+        } else {
+            format!("[API Mode ⚡]").blue().bold()
+        };
+
+        let model_badge = if self.model.contains("flash") || self.model.contains("v4.1") {
+            format!("[DeepSeek-V4.1-Flash ⚡]").bright_cyan().bold()
+        } else if self.model.contains("pro") || self.model.contains("v4") {
+            format!("[DeepSeek-V4-Pro 🚀]").magenta().bold()
+        } else if self.model.contains("reasoner") || self.model.contains("r1") {
             format!("[DeepSeek-R1 🧠]").cyan().bold()
         } else {
             format!("[DeepSeek-V3 ⚡]").green().bold()
         };
 
-        println!("  Active: {} · Type {} for cost, {} for tools\n", model_badge, "/cost".yellow(), "/help".yellow());
+        println!(
+            "  Active: {} {} · Type {} for models, {} for help\n",
+            mode_badge,
+            model_badge,
+            "/model".yellow(),
+            "/help".yellow()
+        );
 
         let mut multiline_buffer = String::new();
 
@@ -257,7 +290,15 @@ impl ReplSession {
                 print_detailed_cost(&self.session_stats, &self.model);
             }
             "/compact" => {
-                let _ = compact_history(&self.client, &self.model, &mut self.messages).await;
+                if self.web_client.is_some() {
+                    println!(
+                        "{}",
+                        "DeepSeek Web Chat automatically tracks and manages conversation memory on server."
+                            .green()
+                    );
+                } else {
+                    let _ = compact_history(&self.client, &self.model, &mut self.messages).await;
+                }
             }
             "/autocompact" => {
                 if parts.len() > 1 {
@@ -521,7 +562,7 @@ impl ReplSession {
     }
 
     async fn check_and_auto_compact(&mut self) {
-        if !self.config.auto_compact {
+        if !self.config.auto_compact || self.web_client.is_some() {
             return;
         }
 
@@ -546,6 +587,16 @@ impl ReplSession {
     }
 
     async fn process_agent_turn(&mut self, prompt: &str) {
+        if self.web_client.is_some() {
+            println!(
+                "{}",
+                "Note: DeepSeek Web Account mode does not support autonomous local tool execution (file editing/bash). Running as direct assistant prompt."
+                    .yellow()
+            );
+            self.process_chat_turn(prompt).await;
+            return;
+        }
+
         self.check_and_auto_compact().await;
         let mut agent = Agent::new(&self.client, self.model.clone(), self.auto_approve);
         agent.session.messages = self.messages.clone();
@@ -569,6 +620,72 @@ impl ReplSession {
     async fn process_chat_turn(&mut self, prompt: &str) {
         self.check_and_auto_compact().await;
         self.messages.push(AgentMessage::user(prompt));
+
+        if let Some(ref web) = self.web_client {
+            let spinner = create_spinner("Solving DeepSeek PoW & streaming...");
+            let mut renderer = StreamRenderer::new();
+            let mut has_received_tokens = false;
+
+            // Ensure web session exists
+            if self.web_session_id.is_none() {
+                match web.create_chat_session().await {
+                    Ok(id) => self.web_session_id = Some(id),
+                    Err(e) => {
+                        spinner.finish_and_clear();
+                        eprintln!(
+                            "\n{}: Failed to create web chat session: {}",
+                            "Error".red().bold(),
+                            e
+                        );
+                        self.messages.pop();
+                        return;
+                    }
+                }
+            }
+
+            let sess_id = self.web_session_id.as_ref().unwrap();
+            let thinking_enabled = self.model.contains("reasoner")
+                || self.model.contains("r1")
+                || self.model.contains("flash");
+
+            let result = web
+                .stream_chat(sess_id, prompt, thinking_enabled, |chunk| {
+                    if !has_received_tokens {
+                        has_received_tokens = true;
+                        spinner.finish_and_clear();
+                    }
+                    match chunk {
+                        StreamChunk::Reasoning(text) => renderer.on_reasoning_chunk(&text),
+                        StreamChunk::Content(text) => renderer.on_content_chunk(&text),
+                        StreamChunk::Usage(_) => {}
+                        StreamChunk::Done => {}
+                    }
+                })
+                .await;
+
+            if !has_received_tokens {
+                spinner.finish_and_clear();
+            }
+
+            match result {
+                Ok((_, content, stats)) => {
+                    renderer.finish(Some(&stats));
+                    println!("  {}", "[Free Web Account - $0.00]".green().bold());
+                    self.last_assistant_response = Some(content.clone());
+                    self.messages.push(AgentMessage::assistant(content));
+
+                    self.session_stats.prompt_tokens += stats.prompt_tokens;
+                    self.session_stats.completion_tokens += stats.completion_tokens;
+                    self.session_stats.total_tokens += stats.total_tokens;
+                }
+                Err(e) => {
+                    renderer.finish(None);
+                    eprintln!("\n{}: {}", "Error".red().bold(), e);
+                    self.messages.pop();
+                }
+            }
+            return;
+        }
 
         let spinner = create_spinner("Connecting to DeepSeek...");
         let mut renderer = StreamRenderer::new();

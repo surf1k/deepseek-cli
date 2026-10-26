@@ -8,6 +8,10 @@ use std::path::PathBuf;
 pub struct Config {
     #[serde(default)]
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub user_token: Option<String>,
+    #[serde(default = "default_auth_mode")]
+    pub auth_mode: String,
     #[serde(default = "default_base_url")]
     pub base_url: String,
     #[serde(default = "default_model")]
@@ -24,6 +28,10 @@ pub struct Config {
     pub auto_compact: bool,
     #[serde(default = "default_compact_threshold")]
     pub compact_threshold_chars: usize,
+}
+
+fn default_auth_mode() -> String {
+    "api".to_string()
 }
 
 fn default_base_url() -> String {
@@ -50,6 +58,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             api_key: None,
+            user_token: None,
+            auth_mode: default_auth_mode(),
             base_url: default_base_url(),
             default_model: default_model(),
             temperature: default_temperature(),
@@ -111,6 +121,30 @@ impl Config {
             }
         }
         self.api_key.as_ref().map(|k| k.trim().to_string())
+    }
+
+    pub fn is_web_mode(&self) -> bool {
+        self.auth_mode == "web" || (self.api_key.is_none() && self.user_token.is_some())
+    }
+
+    pub fn resolve_auth(&self) -> Option<(String, bool)> {
+        // (token_or_key, is_web_mode)
+        if self.is_web_mode() {
+            if let Some(ref t) = self.user_token {
+                if !t.trim().is_empty() {
+                    return Some((t.trim().to_string(), true));
+                }
+            }
+        }
+        if let Some(k) = self.resolve_api_key() {
+            return Some((k, false));
+        }
+        if let Some(ref t) = self.user_token {
+            if !t.trim().is_empty() {
+                return Some((t.trim().to_string(), true));
+            }
+        }
+        None
     }
 
     pub fn canonicalize_model(input: &str) -> String {
